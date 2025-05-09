@@ -151,12 +151,8 @@ async def on_ready():
         print(f'Commands synced to guild {TEST_GUILD_ID}')
     except discord.errors.Forbidden:
         print(f'Не удалось синхронизировать команды для гильдии {TEST_GUILD_ID}: Missing Access')
-    try:
-        bot.tree.clear_commands(guild=None)
-        await bot.tree.sync()
-        print('Global commands cleared and synced')
-    except Exception as e:
-        print(f'Ошибка при синхронизации глобальных команд: {e}')
+    # Убираем глобальную синхронизацию, чтобы не дублировать команды
+    # daily tasks запуск
     daily_link_check.start()
 
 @bot.event
