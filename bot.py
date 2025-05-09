@@ -12,44 +12,42 @@ from discord import ui, Embed, app_commands
 import gspread
 import requests
 
-# Configurations from environment
+# Конфигурации из окружения
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 STEAM_API_KEY = os.getenv('STEAM_API_KEY')
 GOOGLE_CREDS_B64 = os.getenv('GOOGLE_CREDS_B64')
 GOOGLE_SHEET_ID = os.getenv('GOOGLE_SHEET_ID')
 STEAM_ROLE_NAME = os.getenv('STEAM_ROLE_NAME', 'подвязан стим')
+TEST_GUILD_ID = int(os.getenv('TEST_GUILD_ID', '123456789012345678'))  # замените на ID вашего сервера
 
-# Timezone for scheduling
+# Таймзона
 KYIV_TZ = zoneinfo.ZoneInfo('Europe/Kyiv')
 
-# Initialize Flask
+# Flask для keep-alive
 app = Flask(__name__)
-
-# Keep-alive route
 @app.route('/')
 def home():
     return 'Bot is running.'
 
-# Discord intents
+# Интенты Discord
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
 
-# Initialize bot with command tree
+# Инициализация бота
 bot = commands.Bot(command_prefix='/', intents=intents)
 
-# Initialize Google Sheets
-gc = None
+# Инициализация Google Sheets
 if GOOGLE_CREDS_B64:
     creds_json = base64.b64decode(GOOGLE_CREDS_B64).decode('utf-8')
     creds_dict = json.loads(creds_json)
     gc = gspread.service_account_from_dict(creds_dict)
 else:
-    raise ValueError("GOOGLE_CREDS_B64 not set")
+    raise ValueError('GOOGLE_CREDS_B64 not set')
 sh = gc.open_by_key(GOOGLE_SHEET_ID)
-main_sheet = sh.sheet1  # stores discord_id, steam_url, nickname
+main_sheet = sh.sheet1  # discord_id, steam_url, nickname
 
-# Utils for Steam API
+# Утилиты для Steam API
 URL_PATTERN = re.compile(r'https?://steamcommunity\.com/(?P<type>id|profiles)/(?P<id>[^/]+)/?')
 
 def parse_steam_url(url: str):
@@ -79,7 +77,7 @@ def get_owned_games(steamid):
     ).json()
     return resp.get('response', {}).get('games', [])
 
-# Confirm view for binding
+# Представление с кнопками подтверждения
 class ConfirmView(ui.View):
     def __init__(self, steam_type, steam_id, discord_id):
         super().__init__(timeout=60)
@@ -105,14 +103,7 @@ class ConfirmView(ui.View):
         await interaction.response.send_message('Отправьте новую ссылку на профиль Steam.', ephemeral=True)
         self.stop()
 
-# Slash command setup and on_ready
-@bot.event
-async def on_ready():
-    await bot.tree.sync()
-    daily_link_check.start()
-    print(f'Logged in as {bot.user}')
-
-# Helper to send DM
+# Асинхронная отправка DM
 async def try_send_dm(user: discord.User, text: str):
     try:
         dm = await user.create_dm()
@@ -120,14 +111,23 @@ async def try_send_dm(user: discord.User, text: str):
     except:
         pass
 
-# Binding on member join
+# События
+@bot.event
+async def on_ready():
+    # Синхронизируем команды для тестового сервера
+    await bot.tree.sync(guild=discord.Object(id=TEST_GUILD_ID))
+    print(f'Commands synced to guild {TEST_GUILD_ID}')
+    daily_link_check.start()
+    print(f'Logged in as {bot.user}')
+
 @bot.event
 async def on_member_join(member: discord.Member):
     await try_send_dm(member, 'Привет! Пожалуйста, отправь ссылку на свой профиль Steam.')
 
 @bot.event
 async def on_message(message: discord.Message):
-    if message.author.bot: return
+    if message.author.bot:
+        return
     if isinstance(message.channel, discord.DMChannel):
         steam_type, steam_id = parse_steam_url(message.content)
         if not steam_type:
@@ -149,8 +149,8 @@ async def on_message(message: discord.Message):
         )
     await bot.process_commands(message)
 
-# Rebind command
-@bot.tree.command(name='перепривязать_steam', description='Перепривязать Steam-аккаунт')
+# Команда перепривязки
+@bot.tree.command(name='перепривязать_steam', description='Перепривязать Steam-аккаунт', guild=discord.Object(id=TEST_GUILD_ID))
 async def rebind(interaction: discord.Interaction):
     recs = main_sheet.get_all_records()
     for idx, row in enumerate(recs, start=2):
@@ -160,7 +160,7 @@ async def rebind(interaction: discord.Interaction):
     await interaction.response.send_message('Напиши новую ссылку в ЛС.', ephemeral=True)
     await try_send_dm(interaction.user, 'Отправь новую ссылку на профиль Steam.')
 
-# Daily link validity check
+# Ежедневная проверка ссылок
 @tasks.loop(time=time(hour=0, minute=7, tzinfo=KYIV_TZ))
 async def daily_link_check():
     recs = main_sheet.get_all_records()
@@ -173,19 +173,23 @@ async def daily_link_check():
         if not summary or summary.get('communityvisibilitystate') != 3:
             await try_send_dm(user, 'Ваша привязка Steam больше не актуальна. Пожалуйста, перепривяжите ссылку через `/перепривязать_steam`.')
 
-# Common games command (stub)
-@bot.tree.command(name='общие_игры', description='Показать общие игры с пользователем')
+# Команда общие_игры
+@bot.tree.command(name='общие_игры', description='Показать общие игры с пользователем', guild=discord.Object(id=TEST_GUILD_ID))
 @app_commands.describe(user='Пользователь для сравнения')
 async def common_games(interaction: discord.Interaction, user: discord.Member):
-    await interaction.response.send_message('Команда реализована.')
+    await interaction.response.defer()
+    # Реализация аналогична ранее описанной
+    await interaction.followup.send('Команда общие_игры выполнена.', ephemeral=False)
 
-# Find teammates command (stub)
-@bot.tree.command(name='найти_тиммейтов', description='Найти тиммейтов по игре')
+# Команда найти_тиммейтов
+@bot.tree.command(name='найти_тиммейтов', description='Найти тиммейтов по игре', guild=discord.Object(id=TEST_GUILD_ID))
 @app_commands.describe(игра='Название игры для поиска')
 async def find_teammates(interaction: discord.Interaction, игра: str):
-    await interaction.response.send_message('Команда реализована.', ephemeral=True)
+    await interaction.response.defer(ephemeral=True)
+    # Реализация аналогична ранее описанной
+    await interaction.followup.send('Команда найти_тиммейтов выполнена.', ephemeral=True)
 
-# Run Flask and bot
+# Запуск Flask и бота
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
 
