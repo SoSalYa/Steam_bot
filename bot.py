@@ -40,12 +40,12 @@ bot = commands.Bot(command_prefix='/', intents=intents)
 # Инициализация Google Sheets
 if not GOOGLE_CREDS_B64:
     raise ValueError('GOOGLE_CREDS_B64 not set')
-creds_json = base64.b64decode(GOOGLE_CREDS_B64).decode()
+creds_json = base64.b64decode(GOOGLE_CREDS_B64).decode('utf-8')
 gc = gspread.service_account_from_dict(json.loads(creds_json))
 sh = gc.open_by_key(GOOGLE_SHEET_ID)
 main_sheet = sh.sheet1
 
-# Steam API утилиты
+# Утилиты для Steam API
 URL_PATTERN = re.compile(r'https?://steamcommunity\.com/(?P<type>id|profiles)/(?P<id>[^/]+)/?')
 
 def parse_steam_url(url: str):
@@ -53,11 +53,11 @@ def parse_steam_url(url: str):
     return (m.group('type'), m.group('id')) if m else (None, None)
 
 def resolve_vanity(vanity: str):
-    data = requests.get(
+    resp = requests.get(
         'https://api.steampowered.com/ISteamUser/ResolveVanityURL/v1/',
         params={'key': STEAM_API_KEY, 'vanityurl': vanity}
     ).json().get('response', {})
-    return data.get('steamid') if data.get('success') == 1 else None
+    return resp.get('steamid') if resp.get('success') == 1 else None
 
 def get_player_summary(steamid: str):
     players = requests.get(
@@ -79,9 +79,9 @@ def is_multiplayer(appid: int) -> bool:
             params={'appids': appid}
         ).json().get(str(appid), {})
         if info.get('success'):
-            cats = info['data'].get('categories', [])
-            return any('multiplayer' in c.get('description', '').lower() for c in cats)
-    except:
+            categories = info['data'].get('categories', [])
+            return any('multiplayer' in c.get('description', '').lower() for c in categories)
+    except Exception:
         pass
     return False
 
@@ -100,7 +100,7 @@ async def try_send_dm(user: discord.User, text: str):
     except Exception as e:
         print(f'Ошибка отправки DM: {e}')
 
-# Представление для подтверждения
+# View для подтверждения привязки
 class ConfirmView(ui.View):
     def __init__(self, steam_type, steam_id, discord_id):
         super().__init__(timeout=60)
@@ -110,45 +110,46 @@ class ConfirmView(ui.View):
 
     @ui.button(label='Да', style=discord.ButtonStyle.green)
     async def confirm(self, interaction: discord.Interaction, button: ui.Button):
-        steam_url = f'https://steamcommunity.com/{self.steam_type}/{self.steam_id}'
-        nick = get_player_summary(self.steam_id).get('personaname')
+        sid = self.steam_id
+        steam_url = f'https://steamcommunity.com/{self.steam_type}/{sid}'
+        nickname = get_player_summary(sid).get('personaname')
+        # Удалить старую запись
         for idx, r in enumerate(main_sheet.get_all_records(), start=2):
             if str(r.get('discord_id')) == str(self.discord_id):
                 main_sheet.delete_rows(idx)
                 break
-        main_sheet.append_row([self.discord_id, steam_url, nick])
+        main_sheet.append_row([self.discord_id, steam_url, nickname])
         role = discord.utils.get(interaction.guild.roles, name=STEAM_ROLE_NAME)
         member = interaction.guild.get_member(self.discord_id)
         if role and member:
             await member.add_roles(role)
-        await interaction.response.send_message('Привязано!', ephemeral=True)
+        await interaction.response.send_message('Привязка завершена! Роль выдана.', ephemeral=True)
         self.stop()
 
     @ui.button(label='Нет', style=discord.ButtonStyle.red)
     async def deny(self, interaction: discord.Interaction, button: ui.Button):
-        await interaction.response.send_message('Отменено, пришлите новую ссылку.', ephemeral=True)
+        await interaction.response.send_message('Привязка отменена, отправьте новую ссылку.', ephemeral=True)
         self.stop()
 
 # Ежедневная проверка ссылок
 @tasks.loop(time=time(hour=0, minute=7, tzinfo=KYIV_TZ))
 async def daily_link_check():
-    for r in main_sheet.get_all_records():
-        discord_id = int(r.get('discord_id'))
-        _, sid = parse_steam_url(r.get('steam_url', ''))
+    for row in main_sheet.get_all_records():
+        discord_id = int(row.get('discord_id'))
+        _, sid = parse_steam_url(row.get('steam_url', ''))
         summary = get_player_summary(sid)
         user = bot.get_user(discord_id)
         if not summary or summary.get('communityvisibilitystate') != 3:
-            await try_send_dm(user, 'Привязка Steam устарела, перепривяжите через `/перепривязать_steam`.')
+            await try_send_dm(user, 'Ваша привязка Steam устарела. Пожалуйста, перепривяжите через `/перепривязать_steam`.')
 
-# Событие on_ready с правильным порядком очистки и синхронизации
+# События
 @bot.event
 async def on_ready():
-    print('Logged in as', bot.user)
+    print(f'Logged in as {bot.user}')
     guild = discord.Object(id=TEST_GUILD_ID)
     try:
-        # 1) Очистить локальные команды для гильдии
+        # Очистить и синхронизировать команды только в TEST_GUILD_ID
         bot.tree.clear_commands(guild=guild)
-        # 2) Синхронизировать актуальные команды только в этой гильдии
         await bot.tree.sync(guild=guild)
         print(f'Commands synced to guild {TEST_GUILD_ID}')
     except Exception as e:
@@ -157,7 +158,7 @@ async def on_ready():
 
 @bot.event
 async def on_member_join(member: discord.Member):
-    await try_send_dm(member, 'Привет! Отправь ссылку на свой Steam.')
+    await try_send_dm(member, 'Привет! Пожалуйста, отправь ссылку на свой профиль Steam.')
 
 @bot.event
 async def on_message(message: discord.Message):
@@ -166,59 +167,68 @@ async def on_message(message: discord.Message):
     if isinstance(message.channel, discord.DMChannel):
         t, sid = parse_steam_url(message.content)
         if not t:
-            return await message.channel.send('Неверная ссылка, нужен steamcommunity.com/...')
+            return await message.channel.send('Неверная ссылка, нужен формат steamcommunity.com/...')
         if t == 'id':
             real = resolve_vanity(sid)
             if not real:
-                return await message.channel.send('Vanity не найден')
+                return await message.channel.send('Vanity URL не найден, попробуйте снова.')
             sid = real
         if not get_player_summary(sid):
-            return await message.channel.send('Профиль недоступен')
+            return await message.channel.send('Не удалось получить профиль, проверьте API-ключ.')
         await message.channel.send(
-            f"{get_player_summary(sid).get('personaname')}?", view=ConfirmView(t, sid, message.author.id)
+            f"{get_player_summary(sid).get('personaname')} — это вы?",
+            view=ConfirmView(t, sid, message.author.id)
         )
     await bot.process_commands(message)
 
-# Slash-команды, привязанные к TEST_GUILD_ID
-@bot.tree.command(name='перепривязать_steam', description='Перепривязать Steam', guild=discord.Object(id=TEST_GUILD_ID))
+# Slash-команды
+@bot.tree.command(name='перепривязать_steam', description='Перепривязать Steam-аккаунт', guild=discord.Object(id=TEST_GUILD_ID))
 async def rebind(interaction: discord.Interaction):
     for idx, r in enumerate(main_sheet.get_all_records(), start=2):
         if str(r.get('discord_id')) == str(interaction.user.id):
             main_sheet.delete_rows(idx)
             break
-    await interaction.response.send_message('Отправь новую ссылку в ЛС.', ephemeral=True)
-    await try_send_dm(interaction.user, 'Новая ссылка:')
+    await interaction.response.send_message('Напиши новую ссылку в ЛС.', ephemeral=True)
+    await try_send_dm(interaction.user, 'Отправьте новую ссылку на ваш профиль Steam.')
 
-@bot.tree.command(name='общие_игры', description='Показать общие MP-игры', guild=discord.Object(id=TEST_GUILD_ID))
-@app_commands.describe(user='Пользователь')
+@bot.tree.command(name='общие_игры', description='Показать общие мультиплеерные игры', guild=discord.Object(id=TEST_GUILD_ID))
+@app_commands.describe(user='Пользователь для сравнения')
 async def common_games(interaction: discord.Interaction, user: discord.Member):
     await interaction.response.defer()
     sid1 = get_steam_id_for_user(interaction.user.id)
     sid2 = get_steam_id_for_user(user.id)
     if not sid1 or not sid2:
-        return await interaction.followup.send('Оба должны быть привязаны.', ephemeral=True)
+        return await interaction.followup.send('Оба пользователя должны быть привязаны к Steam.', ephemeral=True)
     ids1 = {g['appid']: g['name'] for g in get_owned_games(sid1)}
     ids2 = {g['appid']: g['name'] for g in get_owned_games(sid2)}
     commons = [name for aid, name in ids1.items() if aid in ids2 and is_multiplayer(aid)]
     if not commons:
-        return await interaction.followup.send('Нет общих MP-игр.', ephemeral=False)
+        return await interaction.followup.send('Общих мультиплеерных игр нет.', ephemeral=False)
     desc = '\n'.join(sorted(commons))
-    await interaction.followup.send(embed=Embed(title='Общие MP-игры', description=desc[:1900]))
+    if len(desc) > 1900:
+        # Отправка файла, если список слишком длинный
+        fname = 'common_mp.txt'
+        with open(fname, 'w', encoding='utf-8') as f:
+            f.write(desc)
+        await interaction.followup.send('Список слишком длинный, смотрите файл:', file=discord.File(fname))
+    else:
+        await interaction.followup.send(embed=Embed(title='Общие мультиплеерные игры', description=desc))
 
 @bot.tree.command(name='найти_тиммейтов', description='Найти тиммейтов по игре', guild=discord.Object(id=TEST_GUILD_ID))
-@app_commands.describe(game='Название игры')
-async def find_teammates(interaction: discord.Interaction, game: str):
+@app_commands.describe(игра='Название игры')
+async def find_teammates(interaction: discord.Interaction, игра: str):
     await interaction.response.defer(ephemeral=True)
     uids = []
     for r in main_sheet.get_all_records():
         sid = parse_steam_url(r.get('steam_url', ''))[1]
-        if any(g['name'].lower() == game.lower() for g in get_owned_games(sid)):
+        if any(g['name'].lower() == игра.lower() for g in get_owned_games(sid)):
             uids.append(r.get('discord_id'))
     if not uids:
-        return await interaction.followup.send('Никто не играет.', ephemeral=True)
-    await interaction.followup.send(' '.join(f'<@{uid}>' for uid in uids), ephemeral=True)
+        return await interaction.followup.send('Никто не играет в эту игру.', ephemeral=True)
+    mentions = ' '.join(f'<@{uid}>' for uid in uids)
+    await interaction.followup.send(mentions, ephemeral=True)
 
-# Запуск бота и Flask
+# Запуск Flask и бота
 if __name__ == '__main__':
     threading.Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)))).start()
     bot.run(DISCORD_TOKEN)
