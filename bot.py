@@ -122,6 +122,7 @@ async def on_ready():
     bot.tree.clear_commands(guild=None)
     await bot.tree.sync()
     print('Global commands cleared')
+    print(f'Logged in as {bot.user}')
     daily_link_check.start()
     print(f'Logged in as {bot.user}') {TEST_GUILD_ID}')
     daily_link_check.start()
