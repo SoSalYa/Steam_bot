@@ -113,7 +113,6 @@ class ConfirmView(ui.View):
         steam_url = f'https://steamcommunity.com/{self.steam_type}/{self.steam_id}'
         summary = get_player_summary(self.steam_id)
         nickname = summary.get('personaname') if summary else self.steam_id
-        # Проверка дубликатов
         existing = get_steam_id_for_user(self.discord_id)
         if existing:
             all_records = main_sheet.get_all_records()
@@ -146,21 +145,18 @@ async def try_send_dm(user: discord.User, text: str):
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user}')
-    # Синхронизируем команды в тестовой гильдии
     try:
         guild = discord.Object(id=TEST_GUILD_ID)
         await bot.tree.sync(guild=guild)
         print(f'Commands synced to guild {TEST_GUILD_ID}')
     except discord.errors.Forbidden:
         print(f'Не удалось синхронизировать команды для гильдии {TEST_GUILD_ID}: Missing Access')
-    # Опционально: синхронизировать глобальные команды
     try:
         bot.tree.clear_commands(guild=None)
         await bot.tree.sync()
         print('Global commands cleared and synced')
     except Exception as e:
         print(f'Ошибка при синхронизации глобальных команд: {e}')
-    # Запуск ежедневной проверки
     daily_link_check.start()
 
 @bot.event
@@ -226,11 +222,9 @@ async def common_games(interaction: discord.Interaction, user: discord.Member):
         return await interaction.followup.send('Оба пользователя должны быть привязаны к Steam.', ephemeral=True)
     games1 = get_owned_games(sid1)
     games2 = get_owned_games(sid2)
-    # Определяем общие appid
     ids1 = {g['appid']: g['name'] for g in games1}
     ids2 = {g['appid']: g['name'] for g in games2}
     common_ids = set(ids1.keys()).intersection(ids2.keys())
-    # Фильтруем только мультиплеерные
     common_mp = []
     for appid in common_ids:
         if is_multiplayer(appid):
@@ -239,7 +233,6 @@ async def common_games(interaction: discord.Interaction, user: discord.Member):
         return await interaction.followup.send('У вас нет общих мультиплеерных игр.', ephemeral=False)
     common_mp.sort()
     desc = '\n'.join(common_mp)
-    # Если слишком длинно, отправляем как файл
     if len(desc) > 1900:
         fname = 'common_multiplayer.txt'
         with open(fname, 'w', encoding='utf-8') as f:
@@ -267,7 +260,8 @@ async def find_teammates(interaction: discord.Interaction, игра: str):
     await interaction.followup.send(' '.join(mentions), ephemeral=True)
 
 # Запуск Flask и бота
- def run_flask():
+
+def run_flask():
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
 
