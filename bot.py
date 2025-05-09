@@ -114,19 +114,20 @@ async def try_send_dm(user: discord.User, text: str):
 # События
 @bot.event
 async def on_ready():
-    # Синхронизируем команды для тестового сервера (гильд-команды)
+    # Синхронизируем команды лишь в вашей гильдии (мгновенная доступность)
     guild = discord.Object(id=TEST_GUILD_ID)
     await bot.tree.sync(guild=guild)
     print(f'Commands synced to guild {TEST_GUILD_ID}')
-    # Удаляем глобальные команды
+
+    # Удаляем все глобальные команды (чтобы не дублировались)
     bot.tree.clear_commands(guild=None)
     await bot.tree.sync()
     print('Global commands cleared')
-    print(f'Logged in as {bot.user}')
+
+    # Запускаем ежедневную проверку
     daily_link_check.start()
-    print(f'Logged in as {bot.user}') {TEST_GUILD_ID}')
-    daily_link_check.start()
     print(f'Logged in as {bot.user}')
+
 
 @bot.event
 async def on_member_join(member: discord.Member):
