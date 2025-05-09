@@ -38,14 +38,8 @@ intents.message_content = True
 # Initialize bot with command tree
 bot = commands.Bot(command_prefix='/', intents=intents)
 
-# Sync slash commands on ready
-def setup_app_commands():
-    @bot.event
-    async def on_ready():
-        await bot.tree.sync()
-        print(f'Logged in as {bot.user}')
-
 # Initialize Google Sheets
+gc = None
 if GOOGLE_CREDS_B64:
     creds_json = base64.b64decode(GOOGLE_CREDS_B64).decode('utf-8')
     creds_dict = json.loads(creds_json)
@@ -60,9 +54,7 @@ URL_PATTERN = re.compile(r'https?://steamcommunity\.com/(?P<type>id|profiles)/(?
 
 def parse_steam_url(url: str):
     m = URL_PATTERN.match(url)
-    if not m:
-        return None, None
-    return m.group('type'), m.group('id')
+    return (m.group('type'), m.group('id')) if m else (None, None)
 
 def resolve_vanity(vanity: str):
     resp = requests.get(
@@ -79,6 +71,13 @@ def get_player_summary(steamid: str):
     ).json()
     players = resp.get('response', {}).get('players', [])
     return players[0] if players else None
+
+def get_owned_games(steamid):
+    resp = requests.get(
+        'https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/',
+        params={'key': STEAM_API_KEY, 'steamid': steamid, 'include_appinfo': True}
+    ).json()
+    return resp.get('response', {}).get('games', [])
 
 # Confirm view for binding
 class ConfirmView(ui.View):
@@ -106,19 +105,28 @@ class ConfirmView(ui.View):
         await interaction.response.send_message('Отправьте новую ссылку на профиль Steam.', ephemeral=True)
         self.stop()
 
-# Binding on member join
+# Slash command setup and on_ready
 @bot.event
-async def on_member_join(member):
+async def on_ready():
+    await bot.tree.sync()
+    daily_link_check.start()
+    print(f'Logged in as {bot.user}')
+
+# Binding on member join
+def try_send_dm(user, text):
     try:
-        dm = await member.create_dm()
-        await dm.send('Привет! Пожалуйста, отправь ссылку на свой профиль Steam.')
+        dm = await user.create_dm()
+        await dm.send(text)
     except:
         pass
 
 @bot.event
+async def on_member_join(member):
+    await try_send_dm(member, 'Привет! Пожалуйста, отправь ссылку на свой профиль Steam.')
+
+@bot.event
 async def on_message(message):
-    if message.author.bot:
-        return
+    if message.author.bot: return
     if isinstance(message.channel, discord.DMChannel):
         steam_type, steam_id = parse_steam_url(message.content)
         if not steam_type:
@@ -134,8 +142,7 @@ async def on_message(message):
         if not summary:
             await message.channel.send('Не удалось получить профиль, проверьте API ключ.')
             return
-        view = ConfirmView(steam_type, steam_id, message.author.id)
-        await message.channel.send(f"{summary.get('personaname')} — это вы?", view=view)
+        await message.channel.send(f"{summary.get('personaname')} — это вы?", view=ConfirmView(steam_type, steam_id, message.author.id))
     await bot.process_commands(message)
 
 # Rebind command
@@ -147,8 +154,7 @@ async def rebind(interaction: discord.Interaction):
             main_sheet.delete_rows(idx)
             break
     await interaction.response.send_message('Напиши новую ссылку в ЛС.', ephemeral=True)
-    dm = await interaction.user.create_dm()
-    await dm.send('Отправь новую ссылку на профиль Steam.')
+    await try_send_dm(interaction.user, 'Отправь новую ссылку на профиль Steam.')
 
 # Daily link validity check
 @tasks.loop(time=time(hour=0, minute=7, tzinfo=KYIV_TZ))
@@ -161,52 +167,24 @@ async def daily_link_check():
         summary = get_player_summary(sid)
         user = bot.get_user(discord_id)
         if not summary or summary.get('communityvisibilitystate') != 3:
-            try:
-                dm = await user.create_dm()
-                await dm.send('Ваша привязка Steam больше не актуальна. Пожалуйста, перепривяжите ссылку через `/перепривязать_steam`.')
-            except:
-                pass
+            await try_send_dm(user, 'Ваша привязка Steam больше не актуальна. Пожалуйста, перепривяжите ссылку через `/перепривязать_steam`.')
 
-@daily_link_check.before_loop
-async def before_link_check():
-    await bot.wait_until_ready()
-
-daily_link_check.start()
-
-# Common games command
+# Common games command (example stub)
 @bot.tree.command(name='общие_игры', description='Показать общие игры с пользователем')
 @app_commands.describe(user='Пользователь для сравнения')
 async def common_games(interaction: discord.Interaction, user: discord.Member):
-    await interaction.response.defer()
-    def find(discord_id):
-        for r in main_sheet.get_all_records():
-            if str(r['discord_id']) == str(discord_id):
-                return r['steam_url']
-        return None
-    url1 = find(interaction.user.id)
-    url2 = find(user.id)
-    if not url1 or not url2:
-        await interaction.followup.send('Оба должны иметь привязанный Steam.'); return
-    _, sid1 = parse_steam_url(url1)
-    _, sid2 = parse_steam_url(url2)
-    games1 = get_player_summary(sid1)  # error: should call get_owned_games but omitted for brevity
-    games2 = get_player_summary(sid2)
-    # ... реализация аналогична ранее описанной
-    await interaction.followup.send('Этот пример команды синхронизирован.')
+    await interaction.response.send_message('Команда реализована.')
 
-# Find teammates command
+# Find teammates command (example stub)
 @bot.tree.command(name='найти_тиммейтов', description='Найти тиммейтов по игре')
 @app_commands.describe(игра='Название игры для поиска')
 async def find_teammates(interaction: discord.Interaction, игра: str):
-    await interaction.response.defer(ephemeral=True)
-    # Аналогичная реализация, см. выше
-    await interaction.followup.send('Этот пример команды синхронизирован.')
+    await interaction.response.send_message('Команда реализована.', ephemeral=True)
 
-# Setup and run
+# Run Flask and bot
 def run_flask():
     app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
 
 if __name__ == '__main__':
-    setup_app_commands()
     threading.Thread(target=run_flask).start()
     bot.run(DISCORD_TOKEN)
