@@ -3,6 +3,7 @@ import re
 import threading
 import json
 import base64
+import asyncio
 from datetime import time
 import zoneinfo
 from flask import Flask
@@ -72,6 +73,7 @@ def get_owned_games(steamid):
         params={'key': STEAM_API_KEY, 'steamid': steamid, 'include_appinfo': True}
     ).json().get('response', {}).get('games', [])
 
+# Проверка мультоплеера через Store API
 def is_multiplayer(appid: int) -> bool:
     try:
         info = requests.get(
@@ -142,24 +144,39 @@ async def daily_link_check():
         if not summary or summary.get('communityvisibilitystate') != 3:
             await try_send_dm(user, 'Ваша привязка Steam устарела. Пожалуйста, перепривяжите через `/перепривязать_steam`.')
 
-# События
+# Событие on_ready с двухфазной синхронизацией
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user}')
     guild = discord.Object(id=TEST_GUILD_ID)
-    try:
-        # Очистить и синхронизировать команды только в TEST_GUILD_ID
-        bot.tree.clear_commands(guild=guild)
-        await bot.tree.sync(guild=guild)
-        print(f'Commands synced to guild {TEST_GUILD_ID}')
-    except Exception as e:
-        print(f'Ошибка при синхронизации команд: {e}')
+
+    # 1) Очистить все гильдиевые команды
+    bot.tree.clear_commands(guild=guild)
+
+    # 2) Синхронизировать команды в гильдии (мгновенная доступность)
+    await bot.tree.sync(guild=guild)
+    print(f'Guild commands synced to {TEST_GUILD_ID}')
+    for cmd in bot.tree.get_commands(guild=guild):
+        print(' →', cmd.name)
+
+    # 3) Небольшая пауза, чтобы Discord обработал удаление старых команд
+    await asyncio.sleep(5)
+
+    # 4) Синхронизировать глобально
+    await bot.tree.sync()
+    print('Global commands synced')
+    for cmd in bot.tree.get_commands():
+        print(' →', cmd.name)
+
+    # Запустить ежедневную задачу
     daily_link_check.start()
 
+# Событие on_member_join
 @bot.event
 async def on_member_join(member: discord.Member):
     await try_send_dm(member, 'Привет! Пожалуйста, отправь ссылку на свой профиль Steam.')
 
+# Обработка входящих сообщений в ЛС
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot:
@@ -206,7 +223,6 @@ async def common_games(interaction: discord.Interaction, user: discord.Member):
         return await interaction.followup.send('Общих мультиплеерных игр нет.', ephemeral=False)
     desc = '\n'.join(sorted(commons))
     if len(desc) > 1900:
-        # Отправка файла, если список слишком длинный
         fname = 'common_mp.txt'
         with open(fname, 'w', encoding='utf-8') as f:
             f.write(desc)
