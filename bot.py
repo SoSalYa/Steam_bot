@@ -112,20 +112,21 @@ async def on_ready():
     daily_link_check.start()
     print(f'Logged in as {bot.user}')
 
-# Binding on member join
-def try_send_dm(user, text):
+# Helper to send DM
+async def try_send_dm(user: discord.User, text: str):
     try:
         dm = await user.create_dm()
         await dm.send(text)
     except:
         pass
 
+# Binding on member join
 @bot.event
-async def on_member_join(member):
+async def on_member_join(member: discord.Member):
     await try_send_dm(member, 'Привет! Пожалуйста, отправь ссылку на свой профиль Steam.')
 
 @bot.event
-async def on_message(message):
+async def on_message(message: discord.Message):
     if message.author.bot: return
     if isinstance(message.channel, discord.DMChannel):
         steam_type, steam_id = parse_steam_url(message.content)
@@ -142,7 +143,10 @@ async def on_message(message):
         if not summary:
             await message.channel.send('Не удалось получить профиль, проверьте API ключ.')
             return
-        await message.channel.send(f"{summary.get('personaname')} — это вы?", view=ConfirmView(steam_type, steam_id, message.author.id))
+        await message.channel.send(
+            f"{summary.get('personaname')} — это вы?",
+            view=ConfirmView(steam_type, steam_id, message.author.id)
+        )
     await bot.process_commands(message)
 
 # Rebind command
@@ -169,13 +173,13 @@ async def daily_link_check():
         if not summary or summary.get('communityvisibilitystate') != 3:
             await try_send_dm(user, 'Ваша привязка Steam больше не актуальна. Пожалуйста, перепривяжите ссылку через `/перепривязать_steam`.')
 
-# Common games command (example stub)
+# Common games command (stub)
 @bot.tree.command(name='общие_игры', description='Показать общие игры с пользователем')
 @app_commands.describe(user='Пользователь для сравнения')
 async def common_games(interaction: discord.Interaction, user: discord.Member):
     await interaction.response.send_message('Команда реализована.')
 
-# Find teammates command (example stub)
+# Find teammates command (stub)
 @bot.tree.command(name='найти_тиммейтов', description='Найти тиммейтов по игре')
 @app_commands.describe(игра='Название игры для поиска')
 async def find_teammates(interaction: discord.Interaction, игра: str):
