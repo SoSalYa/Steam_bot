@@ -12,7 +12,7 @@ from discord import ui, Embed, app_commands
 import gspread
 import requests
 
-# Конфигурации из окружающей среды
+# Конфигурации из окружения
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 STEAM_API_KEY = os.getenv('STEAM_API_KEY')
 GOOGLE_CREDS_B64 = os.getenv('GOOGLE_CREDS_B64')
@@ -85,7 +85,7 @@ def is_multiplayer(appid: int) -> bool:
         pass
     return False
 
-# Вспомогательные
+# Вспомогательные функции
 
 def get_steam_id_for_user(discord_id: int):
     for row in main_sheet.get_all_records():
@@ -112,7 +112,6 @@ class ConfirmView(ui.View):
     async def confirm(self, interaction: discord.Interaction, button: ui.Button):
         steam_url = f'https://steamcommunity.com/{self.steam_type}/{self.steam_id}'
         nick = get_player_summary(self.steam_id).get('personaname')
-        # удаляем старую запись
         for idx, r in enumerate(main_sheet.get_all_records(), start=2):
             if str(r.get('discord_id')) == str(self.discord_id):
                 main_sheet.delete_rows(idx)
@@ -141,13 +140,15 @@ async def daily_link_check():
         if not summary or summary.get('communityvisibilitystate') != 3:
             await try_send_dm(user, 'Привязка Steam устарела, перепривяжите через `/перепривязать_steam`.')
 
-# События
+# Событие on_ready с правильным порядком очистки и синхронизации
 @bot.event
 async def on_ready():
     print('Logged in as', bot.user)
     guild = discord.Object(id=TEST_GUILD_ID)
     try:
+        # 1) Очистить локальные команды для гильдии
         bot.tree.clear_commands(guild=guild)
+        # 2) Синхронизировать актуальные команды только в этой гильдии
         await bot.tree.sync(guild=guild)
         print(f'Commands synced to guild {TEST_GUILD_ID}')
     except Exception as e:
@@ -173,11 +174,12 @@ async def on_message(message: discord.Message):
             sid = real
         if not get_player_summary(sid):
             return await message.channel.send('Профиль недоступен')
-        await message.channel.send(f"{get_player_summary(sid).get('personaname')}?", view=ConfirmView(t, sid, message.author.id))
+        await message.channel.send(
+            f"{get_player_summary(sid).get('personaname')}?", view=ConfirmView(t, sid, message.author.id)
+        )
     await bot.process_commands(message)
 
-# Slash-команды
-
+# Slash-команды, привязанные к TEST_GUILD_ID
 @bot.tree.command(name='перепривязать_steam', description='Перепривязать Steam', guild=discord.Object(id=TEST_GUILD_ID))
 async def rebind(interaction: discord.Interaction):
     for idx, r in enumerate(main_sheet.get_all_records(), start=2):
