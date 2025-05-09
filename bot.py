@@ -120,10 +120,13 @@ class ConfirmView(ui.View):
 async def on_ready():
     print('Logged in as', bot.user)
     guild = discord.Object(id=TEST_GUILD_ID)
-    # Очистка и синхронизация только в гильдии
-    await bot.tree.clear_commands(guild=guild)
-    await bot.tree.sync(guild=guild)
-    print('Guild commands synced')
+    try:
+        # Очищаем и синхронизируем только в тестовой гильдии
+        bot.tree.clear_commands(guild=guild)
+        await bot.tree.sync(guild=guild)
+        print(f'Commands synced to guild {TEST_GUILD_ID}')
+    except Exception as e:
+        print(f'Ошибка при синхронизации команд: {e}')
     daily_link_check.start()
 
 @bot.event
