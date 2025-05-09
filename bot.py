@@ -8,7 +8,7 @@ import zoneinfo
 from flask import Flask
 import discord
 from discord.ext import commands, tasks
-from discord import ui, Embed
+from discord import ui, Embed, app_commands
 import gspread
 import requests
 
@@ -115,8 +115,8 @@ class ConfirmView(ui.View):
         nickname = summary.get('personaname') if summary else self.steam_id
         existing = get_steam_id_for_user(self.discord_id)
         if existing:
-            all_records = main_sheet.get_all_records()
-            for idx, r in enumerate(all_records, start=2):
+            records = main_sheet.get_all_records()
+            for idx, r in enumerate(records, start=2):
                 if str(r.get('discord_id')) == str(self.discord_id):
                     main_sheet.delete_rows(idx)
                     break
@@ -191,8 +191,8 @@ async def on_message(message: discord.Message):
 # Команда перепривязки
 @bot.tree.command(name='перепривязать_steam', description='Перепривязать Steam-аккаунт', guild=discord.Object(id=TEST_GUILD_ID))
 async def rebind(interaction: discord.Interaction):
-    all_records = main_sheet.get_all_records()
-    for idx, row in enumerate(all_records, start=2):
+    records = main_sheet.get_all_records()
+    for idx, row in enumerate(records, start=2):
         if str(row.get('discord_id')) == str(interaction.user.id):
             main_sheet.delete_rows(idx)
             break
@@ -260,7 +260,6 @@ async def find_teammates(interaction: discord.Interaction, игра: str):
     await interaction.followup.send(' '.join(mentions), ephemeral=True)
 
 # Запуск Flask и бота
-
 def run_flask():
     port = int(os.getenv('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
