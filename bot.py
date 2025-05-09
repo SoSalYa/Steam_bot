@@ -18,7 +18,7 @@ STEAM_API_KEY = os.getenv('STEAM_API_KEY')
 GOOGLE_CREDS_B64 = os.getenv('GOOGLE_CREDS_B64')
 GOOGLE_SHEET_ID = os.getenv('GOOGLE_SHEET_ID')
 STEAM_ROLE_NAME = os.getenv('STEAM_ROLE_NAME', 'подвязан стим')
-TEST_GUILD_ID = int(os.getenv('TEST_GUILD_ID', '123456789012345678'))  # замените на ID вашего сервера
+TEST_GUILD_ID = int(os.getenv('TEST_GUILD_ID', '1218472302975520839'))  # замените на ID вашего сервера
 
 # Таймзона
 KYIV_TZ = zoneinfo.ZoneInfo('Europe/Kyiv')
