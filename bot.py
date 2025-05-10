@@ -207,19 +207,30 @@ async def common_g(interaction: discord.Interaction,user:discord.Member):
 # === Background Tasks ===
 @tasks.loop(time=time(0,10))
 async def daily_link_check():
-    sh=init_gspread_client();p=sh.worksheet('Profiles').get_all_values()[1:];g=sh.worksheet('Games');g.clear();g.append_row(HEADERS['Games'])
-    for uid,url,_ in p:
-        try: r=requests.get(url,timeout=10)
-            if not r.ok: raise
-        except:
-            m=bot.get_guild(bot.guilds[0].id).get_member(int(uid))
-            if m: await m.send('❗ Обновите `/привязать_steam`.')
+    sh = init_gspread_client()
+    profiles = sh.worksheet('Profiles').get_all_values()[1:]
+    games_ws = sh.worksheet('Games')
+    games_ws.clear()
+    games_ws.append_row(HEADERS['Games'])
+    for uid, url, _ in profiles:
+        try:
+            r = requests.get(url, timeout=10)
+        except Exception:
+            member = bot.get_guild(bot.guilds[0].id).get_member(int(uid))
+            if member:
+                await member.send('❗ Ошибка проверки. Обновите `/привязать_steam`.')
             continue
-        sid=parse_steam_url(url)
-        if sid:
-            for nm,hrs in fetch_owned_games(sid).items(): g.append_row([uid,nm,str(hrs)])
+        if not r.ok:
+            member = bot.get_guild(bot.guilds[0].id).get_member(int(uid))
+            if member:
+                await member.send('❗ Ваша ссылка Steam недействительна. Обновите `/привязать_steam`.')
+            continue
+        steamid = parse_steam_url(url)
+        if steamid:
+            for name, hrs in fetch_owned_games(steamid).items():
+                games_ws.append_row([uid, name, str(hrs)])
 
-@tasks.loop(hours=6)
+@tasks.loop(hours=6)(hours=6)
 async def discount_game_check():
     r=requests.get('https://store.steampowered.com/search/?specials=1&discount=100')
     if r.ok:
