@@ -61,9 +61,17 @@ CACHE_TTL = timedelta(minutes=30)
 ORIGINAL_NICKNAMES = {}
 
 # === Google Sheets Client ===
-
 def init_gspread_client():
-    creds_json = json.loads(base64.b64decode(CREDS_B64))
+    # Decode and parse Google credentials
+    try:
+        creds_bytes = base64.b64decode(CREDS_B64)
+        creds_text = creds_bytes.decode('utf-8')
+        creds_json = json.loads(creds_text)
+    except Exception as e:
+        snippet = repr(creds_bytes[:200]) if 'creds_bytes' in locals() else 'n/a'
+        print(f"[ERROR] Не удалось распарсить GOOGLE_CREDS_JSON_B64: {e}\nDecoded prefix: {snippet}")
+        raise
+
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, SCOPES)
     client = gspread.authorize(creds)
     if SPREADSHEET_ID:
@@ -133,7 +141,6 @@ async def on_member_join(member: discord.Member):
         )
     except:
         pass
-
 
 @bot.event
 async def on_member_update(before: discord.Member, after: discord.Member):
