@@ -230,7 +230,7 @@ async def daily_link_check():
             for name, hrs in fetch_owned_games(steamid).items():
                 games_ws.append_row([uid, name, str(hrs)])
 
-@tasks.loop(hours=6)(hours=6)
+@tasks.loop(hours=6)
 async def discount_game_check():
     r=requests.get('https://store.steampowered.com/search/?specials=1&discount=100')
     if r.ok:
