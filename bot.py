@@ -25,6 +25,9 @@ BETA_CHANNEL_ID = int(os.getenv('BETA_CHANNEL_ID', '0'))
 LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', '0'))
 PREFIX = '/'
 PORT = int(os.getenv('PORT', 5000))
+# Bypass rebind cooldown (for testing)
+SKIP_BIND_TTL = os.getenv('SKIP_BIND_TTL', 'false').lower() in ['1', 'true', 'yes']
+BIND_TTL_HOURS = int(os.getenv('BIND_TTL_HOURS', '24'))
 
 # === Discord Intents ===
 INTENTS = discord.Intents.default()
@@ -208,19 +211,36 @@ class ConfirmView(ui.View):
 async def link_steam(interaction, steam_url: str):
     await interaction.response.defer(ephemeral=True)
     sh = init_gspread_client()
-    idx, row = get_profile_row(sh.worksheet('Profiles'), interaction.user.id)
-    if row and row[2] and datetime.utcnow() - datetime.fromisoformat(row[2]) < timedelta(hours=24):
-        sh.worksheet('Blocked').append_row([str(interaction.user.id), 'Частая привязка'])
-        return await interaction.followup.send('❌ Попробуйте через 24ч.', ephemeral=True)
+    p_ws = sh.worksheet('Profiles')
+    b_ws = sh.worksheet('Blocked')
+    idx, row = get_profile_row(p_ws, interaction.user.id)
+    if idx and row[2] and not SKIP_BIND_TTL:
+        last_bound = datetime.fromisoformat(row[2])
+        if datetime.utcnow() - last_bound < timedelta(hours=BIND_TTL_HOURS):
+            b_ws.append_row([str(interaction.user.id), 'Частая привязка'])
+            return await interaction.followup.send(
+                f'❌ Команда недоступна. Попробуйте повторно через {BIND_TTL_HOURS}ч.',
+                ephemeral=True
+            )
     if not STEAM_URL_REGEX.match(steam_url):
         return await interaction.followup.send('❌ Некорректная ссылка.', ephemeral=True)
     try:
-        r = requests.get(steam_url, timeout=10); r.raise_for_status()
+        r = requests.get(steam_url, timeout=10)
+        r.raise_for_status()
     except:
         return await interaction.followup.send('❌ Профиль недоступен.', ephemeral=True)
     name_m = re.search(r'<title>(.*?) on Steam</title>', r.text)
-    view = ConfirmView(interaction.user.id, steam_url, name_m.group(1) if name_m else 'Unknown', sh)
-    await interaction.followup.send(embed=Embed(description='Подтверждаете?'), view=view, ephemeral=True)
+    view = ConfirmView(
+        user_id=interaction.user.id,
+        steam_url=steam_url,
+        profile_name=name_m.group(1) if name_m else 'Unknown',
+        sheet=sh
+    )
+    await interaction.followup.send(
+        embed=Embed(description='Подтверждаете привязку профиля?'),
+        view=view,
+        ephemeral=True
+    )
 
 @bot.tree.command(name='найти_тиммейтов', description='Найти тиммейтов по игре')
 @app_commands.describe(игра='Название игры')
