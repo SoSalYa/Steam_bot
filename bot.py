@@ -2,11 +2,12 @@ import os
 import re
 import discord
 from discord.ext import commands, tasks
-from discord import app_commands, ui, Embed
+from discord import app_commands, Embed
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import requests
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta
+time
 import base64
 import json
 from bs4 import BeautifulSoup
@@ -17,17 +18,16 @@ from threading import Thread
 # === Config ===
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 STEAM_API_KEY = os.getenv('STEAM_API_KEY')
+EPIC_API_URL = 'https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions'
 CREDS_B64 = os.getenv('GOOGLE_CREDS_JSON_B64')
 SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
 BOT_TITLE = os.getenv('BOT_TITLE', 'SteamBotData')
 DISCOUNT_CHANNEL_ID = int(os.getenv('DISCOUNT_CHANNEL_ID', '0'))
-BETA_CHANNEL_ID = int(os.getenv('BETA_CHANNEL_ID', '0'))
+EPIC_CHANNEL_ID = int(os.getenv('EPIC_CHANNEL_ID', '0'))
 LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', '0'))
 PREFIX = '/'
-PORT = int(os.getenv('PORT', 5000))
-# Bypass rebind cooldown (for testing)
-SKIP_BIND_TTL = os.getenv('SKIP_BIND_TTL', 'false').lower() in ['1', 'true', 'yes']
-BIND_TTL_HOURS = int(os.getenv('BIND_TTL_HOURS', '24'))
+PORT = int(os.getenv('PORT', '5000'))
+CACHE_TTL = timedelta(minutes=30)
 
 # === Discord Intents ===
 INTENTS = discord.Intents.default()
@@ -35,44 +35,27 @@ INTENTS.members = True
 INTENTS.presences = True
 INTENTS.message_content = True
 
-# === Flask App for Keep-Alive ===
+# === Flask Keep-Alive ===
 app = Flask(__name__)
-
 @app.route('/')
 def index():
     return jsonify(status='ok')
-
 def run_flask():
     app.run(host='0.0.0.0', port=PORT)
 
 # === Google Sheets Setup ===
-SCOPES = [
-    'https://www.googleapis.com/auth/spreadsheets',
-    'https://www.googleapis.com/auth/drive'
-]
-REQUIRED_SHEETS = ['Profiles', 'Games', 'Blocked']
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+REQUIRED_SHEETS = ['Profiles', 'Games', 'SentSales', 'SentEpic']
 HEADERS = {
     'Profiles': ['discord_id', 'steam_url', 'last_bound'],
     'Games':    ['discord_id', 'game_name', 'playtime'],
-    'Blocked':  ['discord_id', 'reason']
+    'SentSales': ['game_link', 'discount_end'],
+    'SentEpic': ['game_title', 'offer_end']
 }
 
-# === Utilities & Caches ===
-STEAM_URL_REGEX = re.compile(r'^(?:https?://)?steamcommunity\.com/(?:id|profiles)/([A-Za-z0-9_\-]+)/?$')
-STEAM_GAMES_CACHE = {}
-CACHE_TTL = timedelta(minutes=30)
-ORIGINAL_NICKNAMES = {}
-
-# === Google Sheets Client ===
 def init_gspread_client():
-    try:
-        creds_bytes = base64.b64decode(CREDS_B64)
-        creds_text = creds_bytes.decode('utf-8')
-        creds_json = json.loads(creds_text)
-    except Exception as e:
-        snippet = repr(creds_bytes[:200]) if 'creds_bytes' in locals() else 'n/a'
-        print(f"[ERROR] Failed parsing GOOGLE_CREDS_JSON_B64: {e}\nDecoded prefix: {snippet}")
-        raise
+    creds_bytes = base64.b64decode(CREDS_B64)
+    creds_json = json.loads(creds_bytes)
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, SCOPES)
     client = gspread.authorize(creds)
     sh = client.open_by_key(SPREADSHEET_ID) if SPREADSHEET_ID else client.create(BOT_TITLE)
@@ -85,44 +68,54 @@ def init_gspread_client():
             ws.append_row(hdr)
     return sh
 
+# === Regex & Cache ===
+STEAM_REGEX = re.compile(r'^(?:https?://)?steamcommunity\.com/(?:id|profiles)/([\w\-]+)/?$')
+steam_cache = {}
+ORIGINAL_NICKS = {}
+
+# === Utility: Safe respond ===
+def safe_respond(interaction, **kwargs):
+    try:
+        if not interaction.response.is_done():
+            return interaction.response.send_message(**kwargs)
+        return interaction.followup.send(**kwargs)
+    except discord.NotFound:
+        return
+
 # === Steam Helpers ===
-def resolve_steamid(identifier: str) -> str | None:
-    if identifier.isdigit():
-        return identifier
-    url = 'https://api.steampowered.com/ISteamUser/ResolveVanityURL/v1/'
-    resp = requests.get(url, params={'key': STEAM_API_KEY, 'vanityurl': identifier})
-    if not resp.ok:
-        return None
-    return resp.json().get('response', {}).get('steamid')
+def resolve_steamid(vanity):
+    resp = requests.get(
+        'https://api.steampowered.com/ISteamUser/ResolveVanityURL/v1/',
+        params={'key': STEAM_API_KEY, 'vanityurl': vanity}
+    )
+    return resp.json().get('response', {}).get('steamid') if resp.ok else None
 
-def parse_steam_url(url: str) -> str | None:
-    m = STEAM_URL_REGEX.match(url)
-    return resolve_steamid(m.group(1)) if m else None
 
-def fetch_owned_games(steamid: str) -> dict:
-    url = 'https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/'
-    params = {'key': STEAM_API_KEY, 'steamid': steamid,
-              'include_appinfo': True, 'include_played_free_games': True}
-    resp = requests.get(url, params=params)
-    if not resp.ok:
-        return {}
-    games = resp.json().get('response', {}).get('games', [])
-    return {g['name']: round(g['playtime_forever'] / 60) for g in games}
+def fetch_owned_games(steamid):
+    now = datetime.utcnow()
+    if steamid in steam_cache and now - steam_cache[steamid][0] < CACHE_TTL:
+        return steam_cache[steamid][1]
+    resp = requests.get(
+        'https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/',
+        params={
+            'key': STEAM_API_KEY,
+            'steamid': steamid,
+            'include_appinfo': True,
+            'include_played_free_games': True
+        }
+    )
+    games = resp.json().get('response', {}).get('games', []) if resp.ok else []
+    data = {g['name']: g['playtime_forever'] // 60 for g in games}
+    steam_cache[steamid] = (now, data)
+    return data
 
-def get_profile_row(ws, discord_id: int):
-    for idx, row in enumerate(ws.get_all_values()[1:], start=2):
-        if row and row[0] == str(discord_id):
-            return idx, row
-    return None, None
-
-# === Discord Bot Setup ===
+# === Discord Bot ===
 bot = commands.Bot(command_prefix=PREFIX, intents=INTENTS)
 
-# === Events ===
 @bot.event
 async def on_member_join(member):
     try:
-        await member.send('Добро пожаловать! `/привязать_steam <ссылка>`')
+        await member.send('Добро пожаловать! Используйте `/привязать_steam <ссылка>`')
     except:
         pass
 
@@ -130,270 +123,193 @@ async def on_member_join(member):
 async def on_member_update(before, after):
     before_games = {a.name for a in before.activities if isinstance(a, discord.Game)}
     after_games = {a.name for a in after.activities if isinstance(a, discord.Game)}
-    new = after_games - before_games
-    if not new:
-        orig = ORIGINAL_NICKNAMES.pop(after.id, None)
+    new_games = after_games - before_games
+    if not new_games:
+        orig = ORIGINAL_NICKS.pop(after.id, None)
         if orig:
-            try: await after.edit(nick=orig)
-            except: pass
-        return
-    game = new.pop()
-    sh = init_gspread_client()
-    steam_url = next((r['steam_url'] for r in sh.worksheet('Profiles').get_all_records()
-                      if r['discord_id'] == str(after.id)), None)
-    if not steam_url: return
-    steamid = parse_steam_url(steam_url)
-    if not steamid: return
-    now = datetime.utcnow()
-    cache = STEAM_GAMES_CACHE.get(steamid)
-    games_dict = cache[1] if cache and now - cache[0] < CACHE_TTL else fetch_owned_games(steamid)
-    STEAM_GAMES_CACHE[steamid] = (now, games_dict)
-    if game not in games_dict: return
-    if after.id not in ORIGINAL_NICKNAMES:
-        ORIGINAL_NICKNAMES[after.id] = before.nick or before.name
-    try:
-        await after.edit(nick=f"{ORIGINAL_NICKNAMES[after.id]} | {game}")
-    except: pass
-
-# === Confirm View ===
-class ConfirmView(ui.View):
-    def __init__(self, user_id, steam_url, profile_name, sheet):
-        super().__init__(timeout=60)
-        self.user_id, self.steam_url = user_id, steam_url
-        self.sheet = sheet
-
-    @ui.button(label='Да', style=discord.ButtonStyle.green)
-    async def confirm(self, interaction, button):
-        if interaction.user.id != self.user_id:
-            return await interaction.response.send_message('Не ваш запрос.', ephemeral=True)
-        sh = self.sheet
-        p_ws = sh.worksheet('Profiles')
-        idx, row = get_profile_row(p_ws, self.user_id)
-        now_iso = datetime.utcnow().isoformat()
-        # Update or append profile row
-        if idx:
-            p_ws.update(values=[[self.steam_url, now_iso]], range_name=f'B{idx}:C{idx}')
-        else:
-            p_ws.append_row([str(self.user_id), self.steam_url, now_iso])
-        # Rebuild games sheet in one batch
-        games = fetch_owned_games(parse_steam_url(self.steam_url) or '')
-        g_ws = sh.worksheet('Games')
-        old = [r for r in g_ws.get_all_values()[1:] if r[0] != str(self.user_id)]
-        batch = [HEADERS['Games']] + old + [[str(self.user_id), name, str(hrs)] for name, hrs in games.items()]
-        g_ws.clear()
-        g_ws.append_rows(batch, value_input_option='USER_ENTERED')
-        # Try to add role, silently ignore missing perms
-        role = discord.utils.get(interaction.guild.roles, name='подвязан стим')
-        member = interaction.guild.get_member(self.user_id)
-        if role and member:
             try:
-                await member.add_roles(role)
-            except discord.Forbidden:
-                print(f"[WARN] Missing permission to add role to user {self.user_id}")
-        # Cleanup message
-        try: await interaction.message.delete()
-        except: pass
-        await interaction.response.send_message('✅ Профиль привязан!', ephemeral=True)
-        self.stop()
-
-    @ui.button(label='Нет', style=discord.ButtonStyle.red)
-    async def reject(self, interaction, button):
-        if interaction.user.id != self.user_id:
-            return await interaction.response.send_message('Не ваш запрос.', ephemeral=True)
-        try: await interaction.message.delete()
-        except: pass
-        await interaction.response.send_message('❗ Отправьте новую ссылку `/привязать_steam`.', ephemeral=True)
-        self.stop()
+                await after.edit(nick=orig)
+            except:
+                pass
+        return
+    game = new_games.pop()
+    sh = init_gspread_client()
+    recs = sh.worksheet('Profiles').get_all_records()
+    steam_url = next((r['steam_url'] for r in recs if r['discord_id'] == str(after.id)), None)
+    if not steam_url:
+        return
+    m = STEAM_REGEX.match(steam_url)
+    steamid = m.group(1) if m and m.group(1).isdigit() else resolve_steamid(m.group(1))
+    if not steamid:
+        return
+    games = fetch_owned_games(steamid)
+    if game not in games:
+        return
+    ORIGINAL_NICKS[after.id] = before.nick or before.name
+    try:
+        await after.edit(nick=f"{ORIGINAL_NICKS[after.id]} | {game}")
+    except:
+        pass
 
 # === Slash Commands ===
 @bot.tree.command(name='привязать_steam')
 @app_commands.describe(steam_url='Ссылка на профиль Steam')
 async def link_steam(interaction: discord.Interaction, steam_url: str):
+    await safe_respond(interaction, content='🔄 Проверка...', ephemeral=True)
+    m = STEAM_REGEX.match(steam_url)
+    if not m:
+        return await safe_respond(interaction, content='❌ Некорректная ссылка.', ephemeral=True)
     sh = init_gspread_client()
+    pws = sh.worksheet('Profiles')
+    rows = pws.get_all_records()
+    uid = str(interaction.user.id)
+    existing = next((r for r in rows if r['discord_id'] == uid), None)
+    if existing and datetime.utcnow() - datetime.fromisoformat(existing['last_bound']) < timedelta(hours=24):
+        return await safe_respond(interaction, content='⏳ Подождите перед повторной привязкой.', ephemeral=True)
     try:
-        p_ws = sh.worksheet('Profiles')
-        idx, row = get_profile_row(p_ws, interaction.user.id)
-    except gspread.exceptions.APIError:
-        return await interaction.response.send_message(
-            '❗ Google Sheets временно недоступен, попробуйте через минуту.',
-            ephemeral=True
-        )
-
-    if idx and row[1] == steam_url:
-        return await interaction.response.send_message(
-            'ℹ️ Вы уже привязали этот профиль.',
-            ephemeral=True
-        )
-
-    if idx and row[2] and not SKIP_BIND_TTL:
-        last = datetime.fromisoformat(row[2])
-        if datetime.utcnow() - last < timedelta(hours=BIND_TTL_HOURS):
-            sh.worksheet('Blocked').append_row(
-                [str(interaction.user.id), 'Частая привязка']
-            )
-            return await interaction.response.send_message(
-                f'❌ Попробуйте снова через {BIND_TTL_HOURS}ч.',
-                ephemeral=True
-            )
-
-    if not STEAM_URL_REGEX.match(steam_url):
-        return await interaction.response.send_message(
-            '❌ Некорректная ссылка.',
-            ephemeral=True
-        )
-
-    try:
-        r = requests.get(steam_url, timeout=10)
-        r.raise_for_status()
+        requests.get(steam_url, timeout=5).raise_for_status()
     except:
-        return await interaction.response.send_message(
-            '❌ Профиль недоступен.',
-            ephemeral=True
-        )
+        return await safe_respond(interaction, content='❌ Профиль недоступен.', ephemeral=True)
+    vanity = m.group(1)
+    steamid = vanity if vanity.isdigit() else resolve_steamid(vanity)
+    if not steamid:
+        return await safe_respond(interaction, content='❌ Не удалось получить SteamID.', ephemeral=True)
+    now_iso = datetime.utcnow().isoformat()
+    if existing:
+        idx = rows.index(existing) + 2
+        pws.update(f'B{idx}:C{idx}', [[steam_url, now_iso]])
+    else:
+        pws.append_row([uid, steam_url, now_iso])
+    games = fetch_owned_games(steamid)
+    gws = sh.worksheet('Games')
+    old = [r for r in gws.get_all_values()[1:] if r[0] != uid]
+    gws.clear(); gws.append_row(HEADERS['Games'])
+    for r in old:
+        gws.append_row(r)
+    for name, hrs in games.items():
+        gws.append_row([uid, name, str(hrs)])
+    await safe_respond(interaction, content='✅ Профиль привязан!', ephemeral=True)
 
-    name_m = re.search(r'<title>(.*?) on Steam</title>', r.text)
-    profile_name = name_m.group(1) if name_m else 'Unknown'
-    view = ConfirmView(
-        user_id=interaction.user.id,
-        steam_url=steam_url,
-        profile_name=profile_name,
-        sheet=sh
-    )
-
-    # Единственный ответ с кнопками, обёрнут в try/except
-    try:
-        return await interaction.response.send_message(
-            embed=Embed(description='Подтверждаете привязку профиля?'),
-            view=view,
-            ephemeral=True
-        )
-    except discord.errors.NotFound:
-        # Interaction уже устарел — просто молча выходим
-        return
-
-
-
-@bot.tree.command(name='отвязать_steam', description='Отвязать ваш Steam аккаунт')
+@bot.tree.command(name='отвязать_steam')
 async def unlink_steam(interaction: discord.Interaction):
-    sh = init_gspread_client()
-    p_ws = sh.worksheet('Profiles')
-    idx, row = get_profile_row(p_ws, interaction.user.id)
-    if not idx:
-        return await interaction.response.send_message(
-            '❌ У вас нет привязанного профиля.', ephemeral=True
-        )
+    sh = init_gspread_client(); pws = sh.worksheet('Profiles')
+    rows = pws.get_all_records()
+    uid = str(interaction.user.id)
+    existing = next((r for r in rows if r['discord_id'] == uid), None)
+    if not existing:
+        return await safe_respond(interaction, content='ℹ️ Профиль не найден.', ephemeral=True)
+    rows.remove(existing)
+    pws.clear(); pws.append_row(HEADERS['Profiles'])
+    for r in rows:
+        pws.append_row(list(r.values()))
+    gws = sh.worksheet('Games')
+    games = gws.get_all_values()[1:]
+    kept = [r for r in games if r[0] != uid]
+    gws.clear(); gws.append_row(HEADERS['Games'])
+    for r in kept:
+        gws.append_row(r)
+    await safe_respond(interaction, content='✅ Профиль отвязан.', ephemeral=True)
 
-    all_profiles = p_ws.get_all_values()
-    all_profiles.pop(idx - 1)
-    p_ws.clear()
-    p_ws.append_rows(all_profiles, value_input_option='USER_ENTERED')
-
-    g_ws = sh.worksheet('Games')
-    all_games = g_ws.get_all_values()
-    filtered = [r for r in all_games if r[0] != str(interaction.user.id)]
-    g_ws.clear()
-    g_ws.append_rows(filtered, value_input_option='USER_ENTERED')
-
-    role = discord.utils.get(interaction.guild.roles, name='подвязан стим')
-    member = interaction.guild.get_member(interaction.user.id)
-    if role and member:
-        try:
-            await member.remove_roles(role)
-        except discord.Forbidden:
-            print(f"[WARN] Не хватает прав снять роль у {interaction.user.id}")
-
-    await interaction.response.send_message(
-        '✅ Ваш Steam аккаунт отвязан.', ephemeral=True
-    )
-
-
-@bot.tree.command(name='найти_тиммейтов', description='Найти тиммейтов по игре')
+@bot.tree.command(name='найти_тиммейтов')
 @app_commands.describe(игра='Название игры')
 async def find_teammates(interaction, игра: str):
-    await interaction.response.defer(ephemeral=True)
-    records = init_gspread_client().worksheet('Games').get_all_records()
-    matches = [(r['discord_id'], int(r['playtime'])) for r in records if r['game_name'].lower() == игра.lower()]
+    await safe_respond(interaction, content='🔄 Ищу...', ephemeral=True)
+    recs = init_gspread_client().worksheet('Games').get_all_records()
+    matches = [(r['discord_id'], int(r['playtime'])) for r in recs if r['game_name'].lower() == игра.lower()]
     if not matches:
-        return await interaction.followup.send('Никто не играет в эту игру.', ephemeral=True)
-    mentions = [f"{interaction.guild.get_member(int(uid)).mention} ({hrs}ч)" for uid, hrs in sorted(matches, key=lambda x: x[1], reverse=True)]
+        return await safe_respond(interaction, content='Никто не играет в эту игру.', ephemeral=True)
+    mentions = []
+    for uid, hrs in sorted(matches, key=lambda x: x[1], reverse=True):
+        member = interaction.guild.get_member(int(uid))
+        if member:
+            mentions.append(f"{member.mention} ({hrs}ч)")
     await interaction.followup.send(', '.join(mentions), ephemeral=True)
 
-@bot.tree.command(name='общие_игры', description='Показать общие игры с пользователем')
+@bot.tree.command(name='общие_игры')
 @app_commands.describe(user='Пользователь для сравнения')
 async def common_games(interaction, user: discord.Member):
-    await interaction.response.defer()
-    records = init_gspread_client().worksheet('Games').get_all_records()
-    data = { }
-    for r in records:
+    await safe_respond(interaction, content='🔄 Сбор данных...', ephemeral=True)
+    recs = init_gspread_client().worksheet('Games').get_all_records()
+    data = {}
+    for r in recs:
         data.setdefault(r['discord_id'], {})[r['game_name']] = int(r['playtime'])
     me, ot = str(interaction.user.id), str(user.id)
     if me not in data or ot not in data:
-        return await interaction.followup.send('Нет данных для одного из пользователей.', ephemeral=True)
+        return await safe_respond(interaction, content='❌ Нет данных для одного из пользователей.', ephemeral=True)
     common = [(g, data[me][g], data[ot][g]) for g in set(data[me]) & set(data[ot])]
     if not common:
-        return await interaction.followup.send('Общие игры не найдены.', ephemeral=True)
-    desc = '\n'.join(f"**{g}** — вы: {h1}ч, {user.display_name}: {h2}ч" for g, h1, h2 in sorted(common, key=lambda x: x[1], reverse=True))
-    await interaction.followup.send(embed=Embed(title=f'Общие игры с {user.display_name}', description=desc), ephemeral=False)
+        return await safe_respond(interaction, content='ℹ️ Общие игры не найдены.', ephemeral=True)
+    desc = '\n'.join(f"**{g}** — вы: {h1}ч, {user.display_name}: {h2}ч" for g,h1,h2 in sorted(common, key=lambda x: x[1], reverse=True))
+    await interaction.followup.send(embed=Embed(title=f'Общие игры с {user.display_name}', description=desc))
 
-# === Background Tasks ===
-@tasks.loop(time=time(0,10))
-async def daily_link_check():
-    sh = init_gspread_client()
-    games_ws = sh.worksheet('Games')
-    games_ws.clear()
-    games_ws.append_row(HEADERS['Games'])
-    for uid, url, _ in sh.worksheet('Profiles').get_all_values()[1:]:
-        try:
-            r = requests.get(url, timeout=10); r.raise_for_status()
-        except:
-            member = bot.get_guild(bot.guilds[0].id).get_member(int(uid))
-            if member: await member.send('❗ Обновите `/привязать_steam`.')
-            continue
-        steamid = parse_steam_url(url)
-        if steamid:
-            for name, hrs in fetch_owned_games(steamid).items():
-                games_ws.append_row([uid, name, str(hrs)])
-
-@tasks.loop(hours=6)
-async def discount_game_check():
-    r = requests.get('https://store.steampowered.com/search/?specials=1&discount=100')
-    if r.ok:
-        soup = BeautifulSoup(r.text, 'html.parser')
-        ch = bot.get_channel(DISCOUNT_CHANNEL_ID)
-        if ch:
-            for item in soup.select('.search_result_row')[:5]:
-                title = item.select_one('.title').text.strip()
-                link = item['href'].split('?')[0]
-                await ch.send(f'🔥 100% скидка: [{title}]({link})')
-
+# === Sales & Epic Free Tasks ===
 @tasks.loop(hours=12)
-async def beta_game_check():
-    r = requests.get('https://store.steampowered.com/search/?filter=beta&sort_by=Released_DESC')
-    if r.ok:
-        soup = BeautifulSoup(r.text, 'html.parser')
-        ch = bot.get_channel(BETA_CHANNEL_ID)
-        if ch:
-            for item in soup.select('.search_result_row')[:5]:
-                title = item.select_one('.title').text.strip()
-                link = item['href'].split('?')[0]
-                await ch.send(f'🧪 Новая бета: [{title}]({link})')
-
-@tasks.loop(time=time(0,10))
-async def health_check():
-    if datetime.utcnow().weekday() != 0:
+async def discount_game_check():
+    sh = init_gspread_client(); sws = sh.worksheet('SentSales')
+    rows = sws.get_all_records(); now = datetime.utcnow()
+    fresh = [r for r in rows if datetime.fromisoformat(r['discount_end']) > now]
+    sws.clear(); sws.append_row(HEADERS['SentSales'])
+    for r in fresh:
+        sws.append_row([r['game_link'], r['discount_end']])
+    resp = requests.get('https://store.steampowered.com/search/?specials=1&discount=100')
+    if not resp.ok:
         return
-    mem = psutil.virtual_memory().percent
+    soup = BeautifulSoup(resp.text, 'html.parser'); ch = bot.get_channel(DISCOUNT_CHANNEL_ID)
+    for item in soup.select('.search_result_row')[:5]:
+        link = item['href'].split('?')[0]
+        if any(r['game_link'] == link for r in fresh):
+            continue
+        title = item.select_one('.title').text.strip()
+        end_elem = item.select_one('.search_discount_deadline')
+        end_text = end_elem['data-enddate'] if end_elem else 'неизвестно'
+        if ch:
+            await ch.send(f'🔥 100% скидка: [{title}]({link}) до {end_text}')
+        sws.append_row([link, end_text])
+
+@tasks.loop(hours=24)
+async def epic_free_check():
+    sh = init_gspread_client(); ews = sh.worksheet('SentEpic')
+    rows = ews.get_all_records(); now = datetime.utcnow()
+    fresh = [r for r in rows if datetime.fromisoformat(r['offer_end']) > now]
+    ews.clear(); ews.append_row(HEADERS['SentEpic'])
+    for r in fresh:
+        ews.append_row([r['game_title'], r['offer_end']])
+    data = requests.get(EPIC_API_URL).json().get('data', {})
+    offers = data.get('Catalog', {}).get('searchStore', {}).get('elements', [])
+    ch = bot.get_channel(EPIC_CHANNEL_ID)
+    for game in offers:
+        promos = game.get('promotions', {}).get('promotionalOffers') or []
+        if not promos:
+            continue
+        offer = promos[0]['promotionalOffers'][0]
+        end = datetime.fromtimestamp(offer['endDate'] / 1000)
+        title = game['title']
+        if any(r['game_title'] == title for r in fresh):
+            continue
+        if end > now and ch:
+            await ch.send(f'🎁 Бесплатно: {title} до {end.isoformat()}')
+            ews.append_row([title, end.isoformat()])
+
+# === Health Check ===
+@tasks.loop(days=7)
+async def health_check():
+    mem = psutil.virtual_memory().percent; cpu = psutil.cpu_percent()
     ch = bot.get_channel(LOG_CHANNEL_ID)
-    if ch: await ch.send(f'📊 Еженедельный отчёт памяти: {mem}%')
+    if ch:
+        await ch.send(f'📊 Память: {mem}%, CPU: {cpu}%')
 
 # === Bot Startup ===
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user}')
     Thread(target=run_flask, daemon=True).start()
-    daily_link_check.start(); discount_game_check.start(); beta_game_check.start(); health_check.start()
-    try: await bot.tree.sync(); print('Commands synced')
-    except Exception as e: print(f'Error syncing: {e}')
+    discount_game_check.start()
+    epic_free_check.start()
+    health_check.start()
+    try:
+        bot.tree.sync()
+    except Exception as e:
+        print('Sync error', e)
 
 if __name__ == '__main__':
     bot.run(DISCORD_TOKEN)
