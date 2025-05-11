@@ -290,7 +290,7 @@ async def epic_free_check():
             ews.append_row([title, end.isoformat()])
 
 # === Health Check ===
-@tasks.loop(days=7)
+@tasks.loop(hours=168)
 async def health_check():
     mem = psutil.virtual_memory().percent; cpu = psutil.cpu_percent()
     ch = bot.get_channel(LOG_CHANNEL_ID)
