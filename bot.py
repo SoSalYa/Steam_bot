@@ -209,7 +209,6 @@ class ConfirmView(ui.View):
 @bot.tree.command(name='привязать_steam')
 @app_commands.describe(steam_url='Ссылка на профиль Steam')
 async def link_steam(interaction: discord.Interaction, steam_url: str):
-    # Сначала пытаемся получить профиль, без defer()
     sh = init_gspread_client()
     try:
         p_ws = sh.worksheet('Profiles')
