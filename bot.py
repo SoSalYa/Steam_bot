@@ -211,6 +211,19 @@ class ConfirmView(ui.View):
 async def link_steam(interaction, steam_url: str):
     await interaction.response.defer(ephemeral=True)
     sh = init_gspread_client()
+    # --- Обработка временной недоступности Google Sheets ---
+    try:
+        p_ws = sh.worksheet('Profiles')
+        idx, row = get_profile_row(p_ws, interaction.user.id)
+    except gspread.exceptions.APIError:
+        return await interaction.followup.send(
+            '❗ Сервис Google Sheets временно недоступен, попробуйте через минуту.',
+            ephemeral=True
+        )
+    b_ws = sh.worksheet('Blocked')
+    # Проверка частой привязки и остальной код...(interaction, steam_url: str):
+    await interaction.response.defer(ephemeral=True)
+    sh = init_gspread_client()
     p_ws = sh.worksheet('Profiles')
     b_ws = sh.worksheet('Blocked')
     idx, row = get_profile_row(p_ws, interaction.user.id)
