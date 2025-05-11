@@ -214,20 +214,17 @@ async def link_steam(interaction: discord.Interaction, steam_url: str):
         p_ws = sh.worksheet('Profiles')
         idx, row = get_profile_row(p_ws, interaction.user.id)
     except gspread.exceptions.APIError:
-        # Единичный ответ при ошибке Sheets
         return await interaction.response.send_message(
             '❗ Google Sheets временно недоступен, попробуйте через минуту.',
             ephemeral=True
         )
 
-    # Проверяем, не привязан ли тот же URL
     if idx and row[1] == steam_url:
         return await interaction.response.send_message(
             'ℹ️ Вы уже привязали этот профиль.',
             ephemeral=True
         )
 
-    # Проверка частой привязки
     if idx and row[2] and not SKIP_BIND_TTL:
         last = datetime.fromisoformat(row[2])
         if datetime.utcnow() - last < timedelta(hours=BIND_TTL_HOURS):
@@ -239,14 +236,12 @@ async def link_steam(interaction: discord.Interaction, steam_url: str):
                 ephemeral=True
             )
 
-    # Валидация Steam URL
     if not STEAM_URL_REGEX.match(steam_url):
         return await interaction.response.send_message(
             '❌ Некорректная ссылка.',
             ephemeral=True
         )
 
-    # Проверка доступности страницы
     try:
         r = requests.get(steam_url, timeout=10)
         r.raise_for_status()
@@ -256,7 +251,6 @@ async def link_steam(interaction: discord.Interaction, steam_url: str):
             ephemeral=True
         )
 
-    # Готовим подтверждение
     name_m = re.search(r'<title>(.*?) on Steam</title>', r.text)
     profile_name = name_m.group(1) if name_m else 'Unknown'
     view = ConfirmView(
@@ -266,12 +260,17 @@ async def link_steam(interaction: discord.Interaction, steam_url: str):
         sheet=sh
     )
 
-    # Единичный финальный ответ с кнопками
-    return await interaction.response.send_message(
-        embed=Embed(description='Подтверждаете привязку профиля?'),
-        view=view,
-        ephemeral=True
-    )
+    # Единственный ответ с кнопками, обёрнут в try/except
+    try:
+        return await interaction.response.send_message(
+            embed=Embed(description='Подтверждаете привязку профиля?'),
+            view=view,
+            ephemeral=True
+        )
+    except discord.errors.NotFound:
+        # Interaction уже устарел — просто молча выходим
+        return
+
 
 
 @bot.tree.command(name='отвязать_steam', description='Отвязать ваш Steam аккаунт')
