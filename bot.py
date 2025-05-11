@@ -2,7 +2,7 @@ import os
 import re
 import discord
 from discord.ext import commands, tasks
-from discord import app_commands, ui, Embed
+from discord import app_commands, Embed
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import requests
@@ -26,11 +26,11 @@ EPIC_CHANNEL_ID = int(os.getenv('EPIC_CHANNEL_ID', '0'))
 LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', '0'))
 PREFIX = '/'
 PORT = int(os.getenv('PORT', '5000'))
-SKIP_BIND_TTL = os.getenv('SKIP_BIND_TTL', 'false').lower() in ['1', 'true', 'yes']
+SKIP_BIND_TTL = os.getenv('SKIP_BIND_TTL', 'false').lower() in ['1','true','yes']
 BIND_TTL_HOURS = int(os.getenv('BIND_TTL_HOURS', '24'))
 CACHE_TTL = timedelta(minutes=30)
 
-# === Discord Intents ===
+# === Intents ===
 INTENTS = discord.Intents.default()
 INTENTS.members = True
 INTENTS.presences = True
@@ -51,14 +51,14 @@ REQUIRED_SHEETS = ['Profiles', 'Games', 'SentSales', 'SentEpic']
 HEADERS = {
     'Profiles': ['discord_id', 'steam_url', 'last_bound'],
     'Games':    ['discord_id', 'game_name', 'playtime'],
-    'SentSales': ['game_link', 'discount_end'],
-    'SentEpic': ['game_title', 'offer_end']
+    'SentSales':['game_link', 'discount_end'],
+    'SentEpic':['game_title', 'offer_end']
 }
 
 def init_gspread_client():
-    creds_bytes = base64.b64decode(CREDS_B64)
-    creds_json = json.loads(creds_bytes)
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_json, SCOPES)
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(
+        json.loads(base64.b64decode(CREDS_B64)), SCOPES
+    )
     client = gspread.authorize(creds)
     sh = client.open_by_key(SPREADSHEET_ID) if SPREADSHEET_ID else client.create(BOT_TITLE)
     for title in REQUIRED_SHEETS:
@@ -70,12 +70,11 @@ def init_gspread_client():
             ws.append_row(hdr)
     return sh
 
-# === Regex & Cache ===
+# === Helpers ===
 STEAM_URL_REGEX = re.compile(r'^(?:https?://)?steamcommunity\.com/(?:id|profiles)/([\w\-]+)/?$')
 steam_cache = {}
 ORIGINAL_NICKS = {}
 
-# === Utility: Safe respond ===
 def safe_respond(interaction, **kwargs):
     try:
         if not interaction.response.is_done():
@@ -84,7 +83,6 @@ def safe_respond(interaction, **kwargs):
     except discord.NotFound:
         pass
 
-# === Steam API Helpers ===
 def resolve_steamid(identifier):
     if identifier.isdigit():
         return identifier
@@ -94,21 +92,23 @@ def resolve_steamid(identifier):
     )
     return resp.json().get('response', {}).get('steamid') if resp.ok else None
 
-
 def fetch_owned_games(steamid):
     now = datetime.utcnow()
     if steamid in steam_cache and now - steam_cache[steamid][0] < CACHE_TTL:
         return steam_cache[steamid][1]
     resp = requests.get(
         'https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/',
-        params={'key': STEAM_API_KEY, 'steamid': steamid,
-                'include_appinfo': True, 'include_played_free_games': True}
+        params={
+            'key': STEAM_API_KEY,
+            'steamid': steamid,
+            'include_appinfo': True,
+            'include_played_free_games': True
+        }
     )
     games = resp.json().get('response', {}).get('games', []) if resp.ok else []
-    data = {g['name']: g['playtime_forever'] // 60 for g in games}
+    data = {g['name']: g['playtime_forever']//60 for g in games}
     steam_cache[steamid] = (now, data)
     return data
-
 
 def get_profile_row(ws, discord_id):
     vals = ws.get_all_values()
@@ -117,7 +117,7 @@ def get_profile_row(ws, discord_id):
             return idx, row
     return None, None
 
-# === Discord Bot ===
+# === Bot Setup ===
 bot = commands.Bot(command_prefix=PREFIX, intents=INTENTS)
 
 @bot.event
@@ -141,92 +141,74 @@ async def on_member_join(member):
 async def on_member_update(before, after):
     prev = {a.name for a in before.activities if isinstance(a, discord.Game)}
     curr = {a.name for a in after.activities if isinstance(a, discord.Game)}
-    new = curr - prev
-    if not new:
+    new_games = curr - prev
+    if not new_games:
         orig = ORIGINAL_NICKS.pop(after.id, None)
         if orig:
-            try:
-                await after.edit(nick=orig)
-            except:
-                pass
+            try: await after.edit(nick=orig)
+            except: pass
         return
-    game = new.pop()
+    game = new_games.pop()
     sh = init_gspread_client()
     recs = sh.worksheet('Profiles').get_all_records()
     steam_url = next((r['steam_url'] for r in recs if r['discord_id'] == str(after.id)), None)
-    if not steam_url:
-        return
+    if not steam_url: return
     ident = STEAM_URL_REGEX.match(steam_url).group(1)
     sid = ident if ident.isdigit() else resolve_steamid(ident)
-    if not sid:
-        return
-    games = fetch_owned_games(sid)
-    if game not in games:
-        return
+    if not sid: return
+    owned = fetch_owned_games(sid)
+    if game not in owned: return
     ORIGINAL_NICKS[after.id] = before.nick or before.name
-    try:
-        await after.edit(nick=f"{ORIGINAL_NICKS[after.id]} | {game}")
-    except:
-        pass
+    try: await after.edit(nick=f"{ORIGINAL_NICKS[after.id]} | {game}")
+    except: pass
 
 # === Slash Commands ===
 @bot.tree.command(name='привязать_steam')
 @app_commands.describe(steam_url='Ссылка на профиль Steam')
-async def link_steam(interaction: discord.Interaction, steam_url: str):
+async def link_steam(interaction, steam_url: str):
     await safe_respond(interaction, content='🔄 Проверка ссылки...', ephemeral=True)
-    if not STEAM_URL_REGEX.match(steam_url):
+    m = STEAM_URL_REGEX.match(steam_url)
+    if not m:
         return await safe_respond(interaction, content='❌ Некорректная ссылка.', ephemeral=True)
     sh = init_gspread_client()
     pws = sh.worksheet('Profiles')
     idx, row = get_profile_row(pws, interaction.user.id)
-    # Cooldown
     if idx and row[2] and not SKIP_BIND_TTL:
         last = datetime.fromisoformat(row[2])
         if datetime.utcnow() - last < timedelta(hours=BIND_TTL_HOURS):
-            return await safe_respond(interaction, content=f'⏳ Попробуйте через {BIND_TTL_HOURS} часов.', ephemeral=True)
-    try:
-        requests.get(steam_url, timeout=5).raise_for_status()
-    except:
-        return await safe_respond(interaction, content='❌ Профиль недоступен.', ephemeral=True)
-    ident = STEAM_URL_REGEX.match(steam_url).group(1)
+            return await safe_respond(interaction, content=f'⏳ Попробуйте через {BIND_TTL_HOURS}ч.', ephemeral=True)
+    try: requests.get(steam_url, timeout=5).raise_for_status()
+    except: return await safe_respond(interaction, content='❌ Профиль недоступен.', ephemeral=True)
+    ident = m.group(1)
     sid = ident if ident.isdigit() else resolve_steamid(ident)
-    if not sid:
-        return await safe_respond(interaction, content='❌ Не удалось получить SteamID.', ephemeral=True)
+    if not sid: return await safe_respond(interaction, content='❌ Не удалось получить SteamID.', ephemeral=True)
     now_iso = datetime.utcnow().isoformat()
-    # Update or append
-    if idx:
-        pws.update(f'B{idx}:C{idx}', [[steam_url, now_iso]])
-    else:
-        pws.append_row([str(interaction.user.id), steam_url, now_iso])
-    # Update games sheet
+    if idx: pws.update(f'B{idx}:C{idx}', [[steam_url, now_iso]])
+    else: pws.append_row([str(interaction.user.id), steam_url, now_iso])
     games = fetch_owned_games(sid)
     gws = sh.worksheet('Games')
     old = [r for r in gws.get_all_values()[1:] if r[0] != str(interaction.user.id)]
+    batch = [HEADERS['Games']] + old + [[str(interaction.user.id), name, str(hrs)] for name, hrs in games.items()]
     gws.clear()
-    gws.append_row(HEADERS['Games'])
-    for r in old:
-        gws.append_row(r)
-    for name, hrs in games.items():
-        gws.append_row([str(interaction.user.id), name, str(hrs)])
+    gws.append_rows(batch, value_input_option='USER_ENTERED')
     await safe_respond(interaction, content='✅ Профиль привязан!', ephemeral=True)
 
 @bot.tree.command(name='отвязать_steam')
-async def unlink_steam(interaction: discord.Interaction):
+async def unlink_steam(interaction):
     sh = init_gspread_client()
     pws = sh.worksheet('Profiles')
-    idx, row = get_profile_row(pws, interaction.user.id)
+    idx, _ = get_profile_row(pws, interaction.user.id)
     if not idx:
         return await safe_respond(interaction, content='ℹ️ Профиль не найден.', ephemeral=True)
-    all_vals = pws.get_all_values()
-    all_vals.pop(idx - 1)
+    vals = pws.get_all_values()
+    vals.pop(idx - 1)
     pws.clear()
-    pws.append_rows(all_vals)
-    # Remove games
+    pws.append_rows(vals)
     gws = sh.worksheet('Games')
-    games_vals = gws.get_all_values()
-    filtered = [r for r in games_vals if r[0] != str(interaction.user.id)]
+    all_games = gws.get_all_values()
+    kept = [r for r in all_games if r[0] != str(interaction.user.id)]
     gws.clear()
-    gws.append_rows(filtered)
+    gws.append_rows(kept)
     await safe_respond(interaction, content='✅ Профиль отвязан.', ephemeral=True)
 
 @bot.tree.command(name='найти_тиммейтов')
@@ -254,15 +236,14 @@ async def common_games(interaction, user: discord.Member):
     common = [(g, data[me][g], data[ot][g]) for g in set(data[me]) & set(data[ot])]
     if not common:
         return await safe_respond(interaction, content='ℹ️ Общие игры не найдены.', ephemeral=True)
-    desc = '\n'.join(f"**{g}** — вы: {h1}ч, {user.display_error}: {h2}ч" for g,h1,h2 in sorted(common, key=lambda x: x[1], reverse=True))
+    desc = '\n'.join(f"**{g}** — вы: {h1}ч, {user.display_name}: {h2}ч" for g, h1, h2 in sorted(common, key=lambda x: x[1], reverse=True))
     await interaction.followup.send(embed=Embed(title=f'Общие игры с {user.display_name}', description=desc))
 
 @tasks.loop(time=time(0,10))
 async def daily_link_check():
     sh = init_gspread_client()
     gws = sh.worksheet('Games')
-    gws.clear()
-    gws.append_row(HEADERS['Games'])
+    vals = [HEADERS['Games']]
     for uid, url, _ in init_gspread_client().worksheet('Profiles').get_all_values()[1:]:
         try:
             requests.get(url, timeout=5).raise_for_status()
@@ -272,7 +253,9 @@ async def daily_link_check():
         sid = ident if ident.isdigit() else resolve_steamid(ident)
         if sid:
             for name, hrs in fetch_owned_games(sid).items():
-                gws.append_row([uid, name, str(hrs)])
+                vals.append([uid, name, str(hrs)])
+    gws.clear()
+    gws.append_rows(vals, value_input_option='USER_ENTERED')
 
 @tasks.loop(hours=12)
 async def discount_game_check():
@@ -280,23 +263,23 @@ async def discount_game_check():
     sws = sh.worksheet('SentSales')
     rows = sws.get_all_records()
     now = datetime.utcnow()
-    fresh = []
+    keep = []
     for r in rows:
         try:
             dt = datetime.fromisoformat(r['discount_end'])
         except:
             continue
         if dt > now:
-            fresh.append(r)
+            keep.append([r['game_link'], r['discount_end']])
+    vals = [HEADERS['SentSales']] + keep
     sws.clear()
-    sws.append_row(HEADERS['SentSales'])
-    for r in fresh:
-        sws.append_row([r['game_link'], r['discount_end']])
+    sws.append_rows(vals, value_input_option='USER_ENTERED')
     resp = requests.get('https://store.steampowered.com/search/?specials=1&discount=100')
     if not resp.ok:
         return
     soup = BeautifulSoup(resp.text, 'html.parser')
     ch = bot.get_channel(DISCOUNT_CHANNEL_ID)
+    new = []
     for item in soup.select('.search_result_row')[:5]:
         pct = item.select_one('.discount_pct').text.strip()
         if pct != '-100%':
@@ -305,13 +288,13 @@ async def discount_game_check():
         link = item['href'].split('?')[0]
         end_elem = item.select_one('.search_discount_deadline')
         end_text = end_elem['data-enddate'] if end_elem and end_elem.has_attr('data-enddate') else None
-        if not end_text:
+        if not end_text or any(x[0] == link for x in keep):
             continue
-        if any(r['game_link'] == link for r in fresh):
-            continue
+        new.append([link, end_text])
         if ch:
             await ch.send(f'🔥 100% скидка: [{title}]({link}) до {end_text}')
-        sws.append_row([link, end_text])
+    if new:
+        sws.append_rows(new, value_input_option='USER_ENTERED')
 
 @tasks.loop(hours=24)
 async def epic_free_check():
@@ -319,37 +302,40 @@ async def epic_free_check():
     ews = sh.worksheet('SentEpic')
     rows = ews.get_all_records()
     now = datetime.utcnow()
-    fresh = []
+    keep = []
     for r in rows:
         try:
             dt = datetime.fromisoformat(r['offer_end'])
         except:
             continue
         if dt > now:
-            fresh.append(r)
+            keep.append([r['game_title'], r['offer_end']])
+    vals = [HEADERS['SentEpic']] + keep
     ews.clear()
-    ews.append_row(HEADERS['SentEpic'])
-    for r in fresh:
-        ews.append_row([r['game_title'], r['offer_end']])
+    ews.append_rows(vals, value_input_option='USER_ENTERED')
     data = requests.get(EPIC_API_URL).json().get('data', {})
     offers = data.get('Catalog', {}).get('searchStore', {}).get('elements', [])
     ch = bot.get_channel(EPIC_CHANNEL_ID)
+    new = []
     for game in offers:
         promos = game.get('promotions') or {}
         for key in ('upcomingPromotionalOffers', 'promotionalOffers'):
             for entry in promos.get(key, []):
-                for offer in entry.get('promotionalOffers', []):
-                    end_ts = offer.get('endDate')
+                for o in entry.get('promotionalOffers', []):
+                    ts = o.get('endDate')
                     try:
-                        end = datetime.fromtimestamp(float(end_ts) / 1000)
+                        et = datetime.fromtimestamp(float(ts)/1000)
                     except:
                         continue
                     title = game.get('title')
-                    if any(r['game_title'] == title for r in fresh):
+                    if any(x[0] == title for x in keep):
                         continue
-                    if end > now and ch:
-                        await ch.send(f'🎁 Бесплатно: {title} до {end.isoformat()}')
-                        ews.append_row([title, end.isoformat()])
+                    if et > now:
+                        new.append([title, et.isoformat()])
+                        if ch:
+                            await ch.send(f'🎁 Бесплатно: {title} до {et.isoformat()}')
+    if new:
+        ews.append_rows(new, value_input_option='USER_ENTERED')
 
 @tasks.loop(hours=168)
 async def health_check():
