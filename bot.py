@@ -208,45 +208,58 @@ class ConfirmView(ui.View):
 # === Slash Commands ===
 @bot.tree.command(name='привязать_steam')
 @app_commands.describe(steam_url='Ссылка на профиль Steam')
-async def link_steam(interaction, steam_url: str):
-    await interaction.response.defer(ephemeral=True)
+async def link_steam(interaction: discord.Interaction, steam_url: str):
+    # Сначала пытаемся получить профиль, без defer()
     sh = init_gspread_client()
-    # --- Обработка временной недоступности Google Sheets ---
     try:
         p_ws = sh.worksheet('Profiles')
         idx, row = get_profile_row(p_ws, interaction.user.id)
     except gspread.exceptions.APIError:
-        return await interaction.followup.send(
+        await interaction.response.send_message(
             '❗ Сервис Google Sheets временно недоступен, попробуйте через минуту.',
             ephemeral=True
         )
+        return
+
+    # Теперь можно отложить основной ответ
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=True)
+
     b_ws = sh.worksheet('Blocked')
-    # Проверка частой привязки и остальной код...(interaction, steam_url: str):
-    await interaction.response.defer(ephemeral=True)
-    sh = init_gspread_client()
-    p_ws = sh.worksheet('Profiles')
-    b_ws = sh.worksheet('Blocked')
-    idx, row = get_profile_row(p_ws, interaction.user.id)
+
+    # Проверка частой привязки
     if idx and row[2] and not SKIP_BIND_TTL:
         last_bound = datetime.fromisoformat(row[2])
         if datetime.utcnow() - last_bound < timedelta(hours=BIND_TTL_HOURS):
             b_ws.append_row([str(interaction.user.id), 'Частая привязка'])
-            return await interaction.followup.send(
+            await interaction.followup.send(
                 f'❌ Команда недоступна. Попробуйте повторно через {BIND_TTL_HOURS}ч.',
                 ephemeral=True
             )
+            return
+
+    # Проверка корректности URL
     if not STEAM_URL_REGEX.match(steam_url):
-        return await interaction.followup.send('❌ Некорректная ссылка.', ephemeral=True)
+        await interaction.followup.send('❌ Некорректная ссылка.', ephemeral=True)
+        return
+
+    # Проверка доступности страницы
     try:
         r = requests.get(steam_url, timeout=10)
         r.raise_for_status()
     except:
-        return await interaction.followup.send('❌ Профиль недоступен.', ephemeral=True)
+        await interaction.followup.send('❌ Профиль недоступен.', ephemeral=True)
+        return
+
+    # Вытягиваем название профиля
     name_m = re.search(r'<title>(.*?) on Steam</title>', r.text)
+    profile_name = name_m.group(1) if name_m else 'Unknown'
+
+    # Отправляем кнопку подтверждения
     view = ConfirmView(
         user_id=interaction.user.id,
         steam_url=steam_url,
-        profile_name=name_m.group(1) if name_m else 'Unknown',
+        profile_name=profile_name,
         sheet=sh
     )
     await interaction.followup.send(
@@ -254,6 +267,7 @@ async def link_steam(interaction, steam_url: str):
         view=view,
         ephemeral=True
     )
+
 
 @bot.tree.command(name='найти_тиммейтов', description='Найти тиммейтов по игре')
 @app_commands.describe(игра='Название игры')
