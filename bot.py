@@ -37,8 +37,11 @@ INTENTS.message_content = True
 # === Flask Keep-Alive ===
 app = Flask(__name__)
 @app.route('/')
-def index(): return jsonify(status='ok')
-def run_flask(): app.run(host='0.0.0.0', port=PORT)
+def index():
+    return jsonify(status='ok')
+
+def run_flask():
+    app.run(host='0.0.0.0', port=PORT)
 
 # === Google Sheets Setup ===
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
@@ -57,10 +60,12 @@ def init_gspread_client():
     client = gspread.authorize(creds)
     sh = client.open_by_key(SPREADSHEET_ID) if SPREADSHEET_ID else client.create(BOT_TITLE)
     for title in REQUIRED_SHEETS:
-        if title not in [ws.title for ws in sh.worksheets()]: sh.add_worksheet(title, rows=1000, cols=20)
+        if title not in [ws.title for ws in sh.worksheets()]:
+            sh.add_worksheet(title, rows=1000, cols=20)
     for title, hdr in HEADERS.items():
         ws = sh.worksheet(title)
-        if not ws.get_all_values(): ws.append_row(hdr)
+        if not ws.get_all_values():
+            ws.append_row(hdr)
     return sh
 
 # === Regex & Cache ===
@@ -71,7 +76,8 @@ ORIGINAL_NICKS = {}
 # === Utility: Safe respond ===
 def safe_respond(interaction, **kwargs):
     try:
-        if not interaction.response.is_done(): return interaction.response.send_message(**kwargs)
+        if not interaction.response.is_done():
+            return interaction.response.send_message(**kwargs)
         return interaction.followup.send(**kwargs)
     except discord.NotFound:
         return
@@ -107,8 +113,10 @@ bot = commands.Bot(command_prefix=PREFIX, intents=INTENTS)
 
 @bot.event
 async def on_member_join(member):
-    try: await member.send('Добро пожаловать! Используйте `/привязать_steam <ссылка>`')
-    except: pass
+    try:
+        await member.send('Добро пожаловать! Используйте `/привязать_steam <ссылка>`')
+    except:
+        pass
 
 @bot.event
 async def on_member_update(before, after):
@@ -118,20 +126,29 @@ async def on_member_update(before, after):
     if not new_games:
         orig = ORIGINAL_NICKS.pop(after.id, None)
         if orig:
-            try: await after.edit(nick=orig)
-            except: pass
+            try:
+                await after.edit(nick=orig)
+            except:
+                pass
         return
     game = new_games.pop()
-    sh = init_gspread_client(); recs = sh.worksheet('Profiles').get_all_records()
-    steam_url = next((r['steam_url'] for r in recs if r['discord_id']==str(after.id)), None)
-    if not steam_url: return
-    m = STEAM_REGEX.match(steam_url); steamid = m.group(1) if m and m.group(1).isdigit() else resolve_steamid(m.group(1))
-    if not steamid: return
+    sh = init_gspread_client()
+    recs = sh.worksheet('Profiles').get_all_records()
+    steam_url = next((r['steam_url'] for r in recs if r['discord_id'] == str(after.id)), None)
+    if not steam_url:
+        return
+    m = STEAM_REGEX.match(steam_url)
+    steamid = m.group(1) if m and m.group(1).isdigit() else resolve_steamid(m.group(1))
+    if not steamid:
+        return
     games = fetch_owned_games(steamid)
-    if game not in games: return
+    if game not in games:
+        return
     ORIGINAL_NICKS[after.id] = before.nick or before.name
-    try: await after.edit(nick=f"{ORIGINAL_NICKS[after.id]} | {game}")
-    except: pass
+    try:
+        await after.edit(nick=f"{ORIGINAL_NICKS[after.id]} | {game}")
+    except:
+        pass
 
 # === Slash Commands ===
 @bot.tree.command(name='привязать_steam')
@@ -139,37 +156,63 @@ async def on_member_update(before, after):
 async def link_steam(interaction, steam_url: str):
     await safe_respond(interaction, content='🔄 Проверка...', ephemeral=True)
     m = STEAM_REGEX.match(steam_url)
-    if not m: return await safe_respond(interaction, content='❌ Некорректная ссылка.', ephemeral=True)
-    sh = init_gspread_client(); pws = sh.worksheet('Profiles'); rows = pws.get_all_records()
-    uid = str(interaction.user.id); existing = next((r for r in rows if r['discord_id']==uid), None)
-    if existing and datetime.utcnow()-datetime.fromisoformat(existing['last_bound'])<timedelta(hours=24):
+    if not m:
+        return await safe_respond(interaction, content='❌ Некорректная ссылка.', ephemeral=True)
+    sh = init_gspread_client()
+    pws = sh.worksheet('Profiles')
+    rows = pws.get_all_records()
+    uid = str(interaction.user.id)
+    existing = next((r for r in rows if r['discord_id'] == uid), None)
+    if existing and datetime.utcnow() - datetime.fromisoformat(existing['last_bound']) < timedelta(hours=24):
         return await safe_respond(interaction, content='⏳ Подождите перед повторной привязкой.', ephemeral=True)
-    try: requests.get(steam_url, timeout=5).raise_for_status()
-    except: return await safe_respond(interaction, content='❌ Профиль недоступен.', ephemeral=True)
-    vanity = m.group(1); steamid = vanity if vanity.isdigit() else resolve_steamid(vanity)
-    if not steamid: return await safe_respond(interaction, content='❌ Не удалось получить SteamID.', ephemeral=True)
+    try:
+        requests.get(steam_url, timeout=5).raise_for_status()
+    except:
+        return await safe_respond(interaction, content='❌ Профиль недоступен.', ephemeral=True)
+    vanity = m.group(1)
+    steamid = vanity if vanity.isdigit() else resolve_steamid(vanity)
+    if not steamid:
+        return await safe_respond(interaction, content='❌ Не удалось получить SteamID.', ephemeral=True)
     now_iso = datetime.utcnow().isoformat()
     if existing:
-        idx = rows.index(existing)+2; pws.update(f'B{idx}:C{idx}', [[steam_url, now_iso]])
-    else: pws.append_row([uid, steam_url, now_iso])
+        idx = rows.index(existing) + 2
+        pws.update(f'B{idx}:C{idx}', [[steam_url, now_iso]])
+    else:
+        pws.append_row([uid, steam_url, now_iso])
     # Update games sheet
-    games = fetch_owned_games(steamid); gws = sh.worksheet('Games')
-    old = [r for r in gws.get_all_values()[1:] if r[0]!=uid]
-    gws.clear(); gws.append_row(HEADERS['Games'])
-    for r in old: gws.append_row(r)
-    for name, hrs in games.items(): gws.append_row([uid, name, str(hrs)])
+    games = fetch_owned_games(steamid)
+    gws = sh.worksheet('Games')
+    old = [r for r in gws.get_all_values()[1:] if r[0] != uid]
+    gws.clear()
+    gws.append_row(HEADERS['Games'])
+    for r in old:
+        gws.append_row(r)
+    for name, hrs in games.items():
+        gws.append_row([uid, name, str(hrs)])
     await safe_respond(interaction, content='✅ Профиль привязан!', ephemeral=True)
 
 @bot.tree.command(name='отвязать_steam')
 async def unlink_steam(interaction):
-    sh = init_gspread_client(); pws = sh.worksheet('Profiles'); rows = pws.get_all_records()
-    uid = str(interaction.user.id); existing = next((r for r in rows if r['discord_id']==uid), None)
-    if not existing: return await safe_respond(interaction, content='ℹ️ Профиль не найден.', ephemeral=True)
-    rows.remove(existing); pws.clear(); pws.append_row(HEADERS['Profiles'])
-    for r in rows: pws.append_row(list(r.values()))
-    gws = sh.worksheet('Games'); games = gws.get_all_values()[1:]; kept = [r for r in games if r[0]!=uid]
-    gws.clear(); gws.append_row(HEADERS['Games'])
-    for r in kept: gws.append_row(r)
+    sh = init_gspread_client()
+    pws = sh.worksheet('Profiles')
+    rows = pws.get_all_records()
+    uid = str(interaction.user.id)
+    existing = next((r for r in rows if r['discord_id'] == uid), None)
+    if not existing:
+        return await safe_respond(interaction, content='ℹ️ Профиль не найден.', ephemeral=True)
+    rows.remove(existing)
+    pws.clear()
+    pws.append_row(HEADERS['Profiles'])
+    for r in rows:
+        pws.append_row(list(r.values()))
+    # Remove games
+    gws = sh.worksheet('Games')
+    games = gws.get_all_values()[1:]
+    kept = [r for r in games if r[0] != uid]
+    gws.clear()
+    gws.append_row(HEADERS['Games'])
+    for r in kept:
+        gws.append_row(r)
     await safe_respond(interaction, content='✅ Профиль отвязан.', ephemeral=True)
 
 @bot.tree.command(name='найти_тиммейтов')
@@ -177,9 +220,14 @@ async def unlink_steam(interaction):
 async def find_teammates(interaction, игра: str):
     await safe_respond(interaction, content='🔄 Ищу...', ephemeral=True)
     recs = init_gspread_client().worksheet('Games').get_all_records()
-    matches = [(r['discord_id'], int(r['playtime'])) for r in recs if r['game_name'].lower()==игра.lower()]
-    if not matches: return await safe_respond(interaction, content='Никто не играет в эту игру.', ephemeral=True)
-    mentions = [f"{interaction.guild.get_member(int(uid)).mention} ({hrs}ч)" for uid, hrs in sorted(matches, key=lambda x: x[1], reverse=True) if interaction.guild.get_member(int(uid))]
+    matches = [(r['discord_id'], int(r['playtime'])) for r in recs if r['game_name'].lower() == игра.lower()]
+    if not matches:
+        return await safe_respond(interaction, content='Никто не играет в эту игру.', ephemeral=True)
+    mentions = []
+    for uid, hrs in sorted(matches, key=lambda x: x[1], reverse=True):
+        member = interaction.guild.get_member(int(uid))
+        if member:
+            mentions.append(f"{member.mention} ({hrs}ч)")
     await interaction.followup.send(', '.join(mentions), ephemeral=True)
 
 @bot.tree.command(name='общие_игры')
@@ -202,45 +250,69 @@ async def common_games(interaction, user: discord.Member):
 # === Sales & Epic Free Tasks ===
 @tasks.loop(hours=12)
 async def discount_game_check():
-    sh = init_gspread_client(); sws = sh.worksheet('SentSales')
-    rows = sws.get_all_records(); now = datetime.utcnow()
-    fresh = [r for r in rows if datetime.fromisoformat(r['discount_end']) > now]
-    sws.clear(); sws.append_row(HEADERS['SentSales'])
+    sh = init_gspread_client()
+    sws = sh.worksheet('SentSales')
+    rows = sws.get_all_records()
+    now = datetime.utcnow()
+    fresh = []
+    for r in rows:
+        try:
+            if datetime.fromisoformat(r['discount_end']) > now:
+                fresh.append(r)
+        except ValueError:
+            continue
+    sws.clear()
+    sws.append_row(HEADERS['SentSales'])
     for r in fresh:
         sws.append_row([r['game_link'], r['discount_end']])
     resp = requests.get('https://store.steampowered.com/search/?specials=1&discount=100')
     if not resp.ok:
         return
-    soup = BeautifulSoup(resp.text, 'html.parser'); ch = bot.get_channel(DISCOUNT_CHANNEL_ID)
+    soup = BeautifulSoup(resp.text, 'html.parser')
+    ch = bot.get_channel(DISCOUNT_CHANNEL_ID)
     for item in soup.select('.search_result_row')[:5]:
         link = item['href'].split('?')[0]
         if any(r['game_link'] == link for r in fresh):
             continue
         title = item.select_one('.title').text.strip()
         end_elem = item.select_one('.search_discount_deadline')
-        end_text = end_elem['data-enddate'] if end_elem else 'неизвестно'
+        end_text = end_elem['data-enddate'] if end_elem else None
+        if not end_text:
+            continue
         if ch:
             await ch.send(f'🔥 100% скидка: [{title}]({link}) до {end_text}')
         sws.append_row([link, end_text])
 
 @tasks.loop(hours=24)
 async def epic_free_check():
-    sh = init_gspread_client(); ews = sh.worksheet('SentEpic')
-    rows = ews.get_all_records(); now = datetime.utcnow()
-    fresh = [r for r in rows if datetime.fromisoformat(r['offer_end']) > now]
-    ews.clear(); ews.append_row(HEADERS['SentEpic'])
+    sh = init_gspread_client()
+    ews = sh.worksheet('SentEpic')
+    rows = ews.get_all_records()
+    now = datetime.utcnow()
+    fresh = []
+    for r in rows:
+        try:
+            if datetime.fromisoformat(r['offer_end']) > now:
+                fresh.append(r)
+        except ValueError:
+            continue
+    ews.clear()
+    ews.append_row(HEADERS['SentEpic'])
     for r in fresh:
         ews.append_row([r['game_title'], r['offer_end']])
     data = requests.get(EPIC_API_URL).json().get('data', {})
     offers = data.get('Catalog', {}).get('searchStore', {}).get('elements', [])
     ch = bot.get_channel(EPIC_CHANNEL_ID)
     for game in offers:
-        promos = game.get('promotions', {}).get('promotionalOffers') or []
-        if not promos:
+        promotions = game.get('promotions')
+        if not promotions:
             continue
-        offer = promos[0]['promotionalOffers'][0]
+        promo_list = promotions.get('upcomingPromotionalOffers') or promotions.get('promotionalOffers') or []
+        if not promo_list:
+            continue
+        offer = promo_list[0]['promotionalOffers'][0]
         end = datetime.fromtimestamp(offer['endDate'] / 1000)
-        title = game['title']
+        title = game.get('title')
         if any(r['game_title'] == title for r in fresh):
             continue
         if end > now and ch:
@@ -250,7 +322,8 @@ async def epic_free_check():
 # === Health Check ===
 @tasks.loop(hours=168)
 async def health_check():
-    mem = psutil.virtual_memory().percent; cpu = psutil.cpu_percent()
+    mem = psutil.virtual_memory().percent
+    cpu = psutil.cpu_percent()
     ch = bot.get_channel(LOG_CHANNEL_ID)
     if ch:
         await ch.send(f'📊 Память: {mem}%, CPU: {cpu}%')
@@ -263,10 +336,8 @@ async def on_ready():
     discount_game_check.start()
     epic_free_check.start()
     health_check.start()
-    try:
-        bot.tree.sync()
-    except Exception as e:
-        print('Sync error', e)
+    # Await sync to avoid coroutine warning
+    await bot.tree.sync()
 
 if __name__ == '__main__':
     bot.run(DISCORD_TOKEN)
