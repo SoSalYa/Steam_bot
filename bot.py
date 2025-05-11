@@ -50,8 +50,8 @@ SCOPES = [
 REQUIRED_SHEETS = ['Profiles', 'Games', 'Blocked']
 HEADERS = {
     'Profiles': ['discord_id', 'steam_url', 'last_bound'],
-    'Games':    ['discord_id', 'game_name', 'playtime'],
-    'Blocked':  ['discord_id', 'reason']
+    'Games': ['discord_id', 'game_name', 'playtime'],
+    'Blocked': ['discord_id', 'reason']
 }
 
 # === Utilities & Caches ===
@@ -176,10 +176,7 @@ async def on_member_update(before: discord.Member, after: discord.Member):
     if after.id not in ORIGINAL_NICKNAMES:
         ORIGINAL_NICKNAMES[after.id] = before.nick or before.name
     new_nick = f"{ORIGINAL_NICKNAMES[after.id]} | {game}"
-    try:
-        await after.edit(nick=new_nick)
-    except:
-        pass
+
 
 # === Confirm View ===
 
