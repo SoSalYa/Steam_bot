@@ -214,35 +214,65 @@ async def link_steam(interaction: discord.Interaction, steam_url: str):
         p_ws = sh.worksheet('Profiles')
         idx, row = get_profile_row(p_ws, interaction.user.id)
     except gspread.exceptions.APIError:
+        # Единичный ответ при ошибке Sheets
         return await interaction.response.send_message(
-            '❗ Google Sheets временно недоступен. Попробуйте через минуту.',
+            '❗ Google Sheets временно недоступен, попробуйте через минуту.',
             ephemeral=True
         )
 
-    # **Новая проверка: тот же самый URL уже привязан**
+    # Проверяем, не привязан ли тот же URL
     if idx and row[1] == steam_url:
         return await interaction.response.send_message(
-            'ℹ️ Этот профиль уже привязан к вашему аккаунту.',
+            'ℹ️ Вы уже привязали этот профиль.',
             ephemeral=True
         )
 
-    # Если другой профиль привязан — обычная логика частой привязки
-    b_ws = sh.worksheet('Blocked')
+    # Проверка частой привязки
     if idx and row[2] and not SKIP_BIND_TTL:
-        last_bound = datetime.fromisoformat(row[2])
-        if datetime.utcnow() - last_bound < timedelta(hours=BIND_TTL_HOURS):
-            b_ws.append_row([str(interaction.user.id), 'Частая привязка'])
+        last = datetime.fromisoformat(row[2])
+        if datetime.utcnow() - last < timedelta(hours=BIND_TTL_HOURS):
+            sh.worksheet('Blocked').append_row(
+                [str(interaction.user.id), 'Частая привязка']
+            )
             return await interaction.response.send_message(
-                f'❌ Команда недоступна. Попробуйте через {BIND_TTL_HOURS}ч.',
+                f'❌ Попробуйте снова через {BIND_TTL_HOURS}ч.',
                 ephemeral=True
             )
 
-    # ... дальше валидация steam_url и отправка ConfirmView ...
-    await interaction.response.send_message(
+    # Валидация Steam URL
+    if not STEAM_URL_REGEX.match(steam_url):
+        return await interaction.response.send_message(
+            '❌ Некорректная ссылка.',
+            ephemeral=True
+        )
+
+    # Проверка доступности страницы
+    try:
+        r = requests.get(steam_url, timeout=10)
+        r.raise_for_status()
+    except:
+        return await interaction.response.send_message(
+            '❌ Профиль недоступен.',
+            ephemeral=True
+        )
+
+    # Готовим подтверждение
+    name_m = re.search(r'<title>(.*?) on Steam</title>', r.text)
+    profile_name = name_m.group(1) if name_m else 'Unknown'
+    view = ConfirmView(
+        user_id=interaction.user.id,
+        steam_url=steam_url,
+        profile_name=profile_name,
+        sheet=sh
+    )
+
+    # Единичный финальный ответ с кнопками
+    return await interaction.response.send_message(
         embed=Embed(description='Подтверждаете привязку профиля?'),
-        view=ConfirmView(interaction.user.id, steam_url, profile_name, sh),
+        view=view,
         ephemeral=True
     )
+
 
 @bot.tree.command(name='отвязать_steam', description='Отвязать ваш Steam аккаунт')
 async def unlink_steam(interaction: discord.Interaction):
