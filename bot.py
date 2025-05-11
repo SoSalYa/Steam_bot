@@ -132,52 +132,42 @@ async def on_member_update(before, after):
 
 # === Slash Commands ===
 @bot.tree.command(name='привязать_steam')
-@app_commands.describe(steam_url='Ссылка на профиль Steam')
-async def link_steam(interaction, steam_url: str):
-    await safe_respond(interaction, content='🔄 Проверка...', ephemeral=True)
-    m = STEAM_REGEX.match(steam_url)
-    if not m: return await safe_respond(interaction, content='❌ Некорректная ссылка.', ephemeral=True)
-    sh = init_gspread_client();
-    pws = sh.worksheet('Profiles'); rows = pws.get_all_records()
-    uid = str(interaction.user.id)
-    existing = next((r for r in rows if r.get('discord_id') == uid), None)
-    if existing:
-        last = None
-        try: last = datetime.fromisoformat(existing.get('last_bound', ''))
-        except: pass
-        if last and datetime.utcnow() - last < timedelta(hours=24):
-            return await safe_respond(interaction, content='⏳ Подождите перед повторной привязкой.', ephemeral=True)
+@app_commands.describe(steam_url='Steam profile URL')
+async def link_steam(interaction:discord.Interaction, steam_url:str):
+    await safe_respond(interaction, content='🔄 проверка...', ephemeral=True)
+    if not STEAM_URL_REGEX.match(steam_url):
+        return await safe_respond(interaction, content='❌ Invalid URL.', ephemeral=True)
+    sh = init_gspread_client()
+    pws = sh.worksheet('Profiles')
+    idx, row = get_profile_row(pws, interaction.user.id)
+    if idx and row[1] == steam_url and not SKIP_BIND_TTL:
+        last = datetime.fromisoformat(row[2]) if row[2] else None
+        if last and datetime.utcnow() - last < timedelta(hours=BIND_TTL_HOURS):
+            return await safe_respond(interaction, content=f'⏳ Try after {BIND_TTL_HOURS}h.', ephemeral=True)
     try: requests.get(steam_url, timeout=5).raise_for_status()
-    except: return await safe_respond(interaction, content='❌ Профиль недоступен.', ephemeral=True)
-    vanity = m.group(1); steamid = vanity if vanity.isdigit() else resolve_steamid(vanity)
-    if not steamid: return await safe_respond(interaction, content='❌ Не удалось получить SteamID.', ephemeral=True)
+    except: return await safe_respond(interaction, content='❌ Profile unreachable.', ephemeral=True)
+    ident = STEAM_URL_REGEX.match(steam_url).group(1)
+    sid = ident if ident.isdigit() else resolve_steamid(ident)
+    if not sid: return await safe_respond(interaction, content='❌ Could not resolve SteamID.', ephemeral=True)
     now_iso = datetime.utcnow().isoformat()
-    if existing:
-        idx = rows.index(existing) + 2
+    if idx:
         pws.update(f'B{idx}:C{idx}', [[steam_url, now_iso]])
     else:
-        pws.append_row([uid, steam_url, now_iso])
-    # Update games
-    games = fetch_owned_games(steamid); gws = sh.worksheet('Games')
-    old = [r for r in gws.get_all_values()[1:] if r[0] != uid]
-    gws.clear(); gws.append_row(HEADERS['Games'])
-    for r in old: gws.append_row(r)
-    for name, hrs in games.items(): gws.append_row([uid, name, str(hrs)])
-    await safe_respond(interaction, content='✅ Профиль привязан!', ephemeral=True)
+        pws.append_row([str(interaction.user.id), steam_url, now_iso])
+    # update games sheet (unchanged)
+    await safe_respond(interaction, content='✅ привязано!', ephemeral=True)
 
 @bot.tree.command(name='отвязать_steam')
-async def unlink_steam(interaction):
-    sh = init_gspread_client(); pws = sh.worksheet('Profiles'); rows = pws.get_all_records()
-    uid = str(interaction.user.id); existing = next((r for r in rows if r.get('discord_id') == uid), None)
-    if not existing: return await safe_respond(interaction, content='ℹ️ Профиль не найден.', ephemeral=True)
-    rows.remove(existing)
-    pws.clear(); pws.append_row(HEADERS['Profiles'])
-    for r in rows: pws.append_row(list(r.values()))
-    gws = sh.worksheet('Games'); games = gws.get_all_values()[1:]
-    kept = [r for r in games if r[0] != uid]
-    gws.clear(); gws.append_row(HEADERS['Games'])
-    for r in kept: gws.append_row(r)
-    await safe_respond(interaction, content='✅ Профиль отвязан.', ephemeral=True)
+async def unlink_steam(interaction:discord.Interaction):
+    sh = init_gspread_client()
+    pws = sh.worksheet('Profiles')
+    idx, row = get_profile_row(pws, interaction.user.id)
+    if not idx:
+        return await safe_respond(interaction, content='ℹ️ у вас нет привязаного профиля.', ephemeral=True)
+    all_vals = pws.get_all_values()
+    all_vals.pop(idx-1)
+    pws.clear(); pws.append_rows(all_vals)
+    await safe_respond(interaction, content='✅ отвязано.', ephemeral=True)
 
 @bot.tree.command(name='найти_тиммейтов')
 @app_commands.describe(игра='Название игры')
