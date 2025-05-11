@@ -166,7 +166,10 @@ async def on_member_update(before, after):
 @bot.tree.command(name='привязать_steam')
 @app_commands.describe(steam_url='Ссылка на профиль Steam')
 async def link_steam(interaction, steam_url: str):
-    await safe_respond(interaction, content='🔄 Проверка ссылки...', ephemeral=True)
+       # Логируем вход в команду
+    print(f"[link_steam] user={interaction.user.id} url={steam_url} interaction_id={interaction.id}")
+    # Откладываем ответ, чтобы у нас была возможность слать followup
+    await interaction.response.defer(thinking=True, ephemeral=True)
     m = STEAM_URL_REGEX.match(steam_url)
     if not m:
         return await safe_respond(interaction, content='❌ Некорректная ссылка.', ephemeral=True)
