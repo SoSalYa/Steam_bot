@@ -215,7 +215,7 @@ async def link_steam(interaction: discord.Interaction, steam_url: str):
         idx, row = get_profile_row(p_ws, interaction.user.id)
     except gspread.exceptions.APIError:
         return await interaction.response.send_message(
-            '❗ Сервис Google Sheets временно недоступен, попробуйте через минуту.',
+            '❗ Google Sheets временно недоступен, попробуйте через минуту.',
             ephemeral=True
         )
 
@@ -223,40 +223,40 @@ async def link_steam(interaction: discord.Interaction, steam_url: str):
 
     # Проверка частой привязки
     if idx and row[2] and not SKIP_BIND_TTL:
-        last_bound = datetime.fromisoformat(row[2])
-        if datetime.utcnow() - last_bound < timedelta(hours=BIND_TTL_HOURS):
+        last = datetime.fromisoformat(row[2])
+        if datetime.utcnow() - last < timedelta(hours=BIND_TTL_HOURS):
             b_ws.append_row([str(interaction.user.id), 'Частая привязка'])
             return await interaction.response.send_message(
-                f'❌ Команда недоступна. Попробуйте через {BIND_TTL_HOURS}ч.',
+                f'❌ Попробуйте снова через {BIND_TTL_HOURS}ч.',
                 ephemeral=True
             )
 
-    # Проверка валидности ссылки
+    # Валидность ссылки и доступность
     if not STEAM_URL_REGEX.match(steam_url):
         return await interaction.response.send_message('❌ Некорректная ссылка.', ephemeral=True)
-
-    # Проверка доступности страницы
     try:
-        r = requests.get(steam_url, timeout=10)
-        r.raise_for_status()
+        r = requests.get(steam_url, timeout=10); r.raise_for_status()
     except:
         return await interaction.response.send_message('❌ Профиль недоступен.', ephemeral=True)
 
-    # Подготовка подтверждения
     name_m = re.search(r'<title>(.*?) on Steam</title>', r.text)
     profile_name = name_m.group(1) if name_m else 'Unknown'
-    view = ConfirmView(
-        user_id=interaction.user.id,
-        steam_url=steam_url,
-        profile_name=profile_name,
-        sheet=sh
-    )
+    view = ConfirmView(interaction.user.id, steam_url, profile_name, sh)
 
-    await interaction.response.send_message(
-        embed=Embed(description='Подтверждаете привязку профиля?'),
-        view=view,
-        ephemeral=True
-    )
+    # Попытка первичного ответа
+    try:
+        await interaction.response.send_message(
+            embed=Embed(description='Подтверждаете привязку профиля?'),
+            view=view,
+            ephemeral=True
+        )
+    except discord.NotFound:
+        # Если взаимодействие истекло — используем followup
+        await interaction.followup.send(
+            embed=Embed(description='Подтверждаете привязку профиля?'),
+            view=view,
+            ephemeral=True
+        )
 
 
 
