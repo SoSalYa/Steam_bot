@@ -276,7 +276,6 @@ async def link_steam(interaction: discord.Interaction, steam_url: str):
 
 @bot.tree.command(name='отвязать_steam', description='Отвязать ваш Steam аккаунт')
 async def unlink_steam(interaction: discord.Interaction):
-    # 1) Открываем таблицу и ищем профиль
     sh = init_gspread_client()
     p_ws = sh.worksheet('Profiles')
     idx, row = get_profile_row(p_ws, interaction.user.id)
@@ -285,21 +284,17 @@ async def unlink_steam(interaction: discord.Interaction):
             '❌ У вас нет привязанного профиля.', ephemeral=True
         )
 
-    # 2) Удаляем строку с профилем из Profiles
-    all_profiles = p_ws.get_all_values()  # включает заголовок
-    # удаляем нужную строку по индексу
+    all_profiles = p_ws.get_all_values()
     all_profiles.pop(idx - 1)
     p_ws.clear()
     p_ws.append_rows(all_profiles, value_input_option='USER_ENTERED')
 
-    # 3) Очищаем все записи игр этого пользователя
     g_ws = sh.worksheet('Games')
-    all_games = g_ws.get_all_values()  # включает заголовок
+    all_games = g_ws.get_all_values()
     filtered = [r for r in all_games if r[0] != str(interaction.user.id)]
     g_ws.clear()
     g_ws.append_rows(filtered, value_input_option='USER_ENTERED')
 
-    # 4) Снимаем роль «подвязан стим», если есть
     role = discord.utils.get(interaction.guild.roles, name='подвязан стим')
     member = interaction.guild.get_member(interaction.user.id)
     if role and member:
@@ -308,7 +303,6 @@ async def unlink_steam(interaction: discord.Interaction):
         except discord.Forbidden:
             print(f"[WARN] Не хватает прав снять роль у {interaction.user.id}")
 
-    # 5) Сообщаем об успехе
     await interaction.response.send_message(
         '✅ Ваш Steam аккаунт отвязан.', ephemeral=True
     )
