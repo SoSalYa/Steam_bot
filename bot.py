@@ -6,8 +6,7 @@ from discord import app_commands, Embed
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import requests
-from datetime import datetime, timedelta
-time
+from datetime import datetime, timedelta, time
 import base64
 import json
 from bs4 import BeautifulSoup
