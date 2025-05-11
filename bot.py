@@ -167,20 +167,27 @@ class ConfirmView(ui.View):
         p_ws = sh.worksheet('Profiles')
         idx, row = get_profile_row(p_ws, self.user_id)
         now_iso = datetime.utcnow().isoformat()
+        # Update or append profile row
         if idx:
-            p_ws.update(f'B{idx}:C{idx}', [[self.steam_url, now_iso]])
+            p_ws.update(values=[[self.steam_url, now_iso]], range_name=f'B{idx}:C{idx}')
         else:
             p_ws.append_row([str(self.user_id), self.steam_url, now_iso])
+        # Rebuild games sheet in one batch
         games = fetch_owned_games(parse_steam_url(self.steam_url) or '')
         g_ws = sh.worksheet('Games')
-        old_rows = [r for r in g_ws.get_all_values()[1:] if r[0] != str(self.user_id)]
-        new_rows = [[str(self.user_id), name, str(hrs)] for name, hrs in games.items()]
-        all_rows = [HEADERS['Games']] + old_rows + new_rows
+        old = [r for r in g_ws.get_all_values()[1:] if r[0] != str(self.user_id)]
+        batch = [HEADERS['Games']] + old + [[str(self.user_id), name, str(hrs)] for name, hrs in games.items()]
         g_ws.clear()
-        g_ws.append_rows(all_rows, value_input_option='USER_ENTERED')
+        g_ws.append_rows(batch, value_input_option='USER_ENTERED')
+        # Try to add role, silently ignore missing perms
         role = discord.utils.get(interaction.guild.roles, name='подвязан стим')
         member = interaction.guild.get_member(self.user_id)
-        if role and member: await member.add_roles(role)
+        if role and member:
+            try:
+                await member.add_roles(role)
+            except discord.Forbidden:
+                print(f"[WARN] Missing permission to add role to user {self.user_id}")
+        # Cleanup message
         try: await interaction.message.delete()
         except: pass
         await interaction.response.send_message('✅ Профиль привязан!', ephemeral=True)
@@ -231,7 +238,7 @@ async def find_teammates(interaction, игра: str):
 async def common_games(interaction, user: discord.Member):
     await interaction.response.defer()
     records = init_gspread_client().worksheet('Games').get_all_records()
-    data = {}
+    data = { }
     for r in records:
         data.setdefault(r['discord_id'], {})[r['game_name']] = int(r['playtime'])
     me, ot = str(interaction.user.id), str(user.id)
@@ -252,12 +259,10 @@ async def daily_link_check():
     games_ws.append_row(HEADERS['Games'])
     for uid, url, _ in sh.worksheet('Profiles').get_all_values()[1:]:
         try:
-            r = requests.get(url, timeout=10)
-            r.raise_for_status()
+            r = requests.get(url, timeout=10); r.raise_for_status()
         except:
             member = bot.get_guild(bot.guilds[0].id).get_member(int(uid))
-            if member:
-                await member.send('❗ Обновите `/привязать_steam`.')
+            if member: await member.send('❗ Обновите `/привязать_steam`.')
             continue
         steamid = parse_steam_url(url)
         if steamid:
@@ -294,8 +299,7 @@ async def health_check():
         return
     mem = psutil.virtual_memory().percent
     ch = bot.get_channel(LOG_CHANNEL_ID)
-    if ch:
-        await ch.send(f'📊 Еженедельный отчёт памяти: {mem}%')
+    if ch: await ch.send(f'📊 Еженедельный отчёт памяти: {mem}%')
 
 # === Bot Startup ===
 @bot.event
