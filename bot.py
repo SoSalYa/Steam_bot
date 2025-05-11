@@ -209,7 +209,6 @@ class ConfirmView(ui.View):
 @bot.tree.command(name='привязать_steam')
 @app_commands.describe(steam_url='Ссылка на профиль Steam')
 async def link_steam(interaction: discord.Interaction, steam_url: str):
-    # 1) Попытка доступа к таблице
     sh = init_gspread_client()
     try:
         p_ws = sh.worksheet('Profiles')
@@ -222,7 +221,7 @@ async def link_steam(interaction: discord.Interaction, steam_url: str):
 
     b_ws = sh.worksheet('Blocked')
 
-    # 2) Проверка частой привязки
+    # Проверка частой привязки
     if idx and row[2] and not SKIP_BIND_TTL:
         last_bound = datetime.fromisoformat(row[2])
         if datetime.utcnow() - last_bound < timedelta(hours=BIND_TTL_HOURS):
@@ -232,18 +231,18 @@ async def link_steam(interaction: discord.Interaction, steam_url: str):
                 ephemeral=True
             )
 
-    # 3) Проверка валидности ссылки
+    # Проверка валидности ссылки
     if not STEAM_URL_REGEX.match(steam_url):
         return await interaction.response.send_message('❌ Некорректная ссылка.', ephemeral=True)
 
-    # 4) Проверка доступности страницы
+    # Проверка доступности страницы
     try:
         r = requests.get(steam_url, timeout=10)
         r.raise_for_status()
     except:
         return await interaction.response.send_message('❌ Профиль недоступен.', ephemeral=True)
 
-    # 5) Подготовка подтверждения
+    # Подготовка подтверждения
     name_m = re.search(r'<title>(.*?) on Steam</title>', r.text)
     profile_name = name_m.group(1) if name_m else 'Unknown'
     view = ConfirmView(
@@ -253,12 +252,12 @@ async def link_steam(interaction: discord.Interaction, steam_url: str):
         sheet=sh
     )
 
-    # 6) Отправляем сообщение с кнопками
     await interaction.response.send_message(
         embed=Embed(description='Подтверждаете привязку профиля?'),
         view=view,
         ephemeral=True
     )
+
 
 
 @bot.tree.command(name='найти_тиммейтов', description='Найти тиммейтов по игре')
