@@ -310,22 +310,63 @@ async def find_teammates(interaction, игра: str):
     mentions = [f"{interaction.guild.get_member(int(uid)).mention} ({hrs}ч)" for uid, hrs in sorted(matches, key=lambda x: x[1], reverse=True) if interaction.guild.get_member(int(uid))]
     await interaction.followup.send(', '.join(mentions), ephemeral=True)
 
-@bot.tree.command(name='общие_игры')
+@bot.tree.command(name='общие_игры', description='Показать общие игры с пользователем')
 @app_commands.describe(user='Пользователь для сравнения')
-async def common_games(interaction, user: discord.Member):
-    await safe_respond(interaction, content='🔄 Сбор данных...', ephemeral=True)
-    recs = init_gspread_client().worksheet('Games').get_all_records()
-    data = {}
-    for r in recs:
-        data.setdefault(r['discord_id'], {})[r['game_name']] = int(r['playtime'])
-    me, ot = str(interaction.user.id), str(user.id)
-    if me not in data or ot not in data:
-        return await safe_respond(interaction, content='❌ Нет данных для одного из пользователей.', ephemeral=True)
-    common = [(g, data[me][g], data[ot][g]) for g in set(data[me]) & set(data[ot])]
+async def common_games(interaction: discord.Interaction, user: discord.Member):
+    # 1) Мы ответим чуть позже
+    await interaction.response.defer(ephemeral=True)
+
+    # 2) Считываем всё из листа "Games"
+    records = init_gspread_client().worksheet('Games').get_all_records()
+    data: dict[int, dict[str,int]] = {}
+    for r in records:
+        try:
+            uid = int(r['discord_id'])
+            playtime = int(r['playtime'])
+            gamename = r['game_name']
+        except (KeyError, ValueError):
+            continue
+        data.setdefault(uid, {})[gamename] = playtime
+
+    me_id = interaction.user.id
+    ot_id = user.id
+
+    # 3) Проверяем, есть ли у нас и у оппонента данные
+    if me_id not in data:
+        return await interaction.followup.send(
+            '❌ У вас нет сохранённых игр. Привяжите Steam командой `/привязать_steam`.',
+            ephemeral=True
+        )
+    if ot_id not in data:
+        return await interaction.followup.send(
+            f'❌ У {user.display_name} нет сохранённых игр.',
+            ephemeral=True
+        )
+
+    # 4) Ищем пересечение
+    my_games = data[me_id]
+    their_games = data[ot_id]
+    common = set(my_games).intersection(their_games)
+
     if not common:
-        return await safe_respond(interaction, content='ℹ️ Общие игры не найдены.', ephemeral=True)
-    desc = '\n'.join(f"**{g}** — вы: {h1}ч, {user.display_name}: {h2}ч" for g, h1, h2 in sorted(common, key=lambda x: x[1], reverse=True))
-    await interaction.followup.send(embed=Embed(title=f'Общие игры с {user.display_name}', description=desc))
+        return await interaction.followup.send(
+            'ℹ️ Общих игр не найдено.',
+            ephemeral=True
+        )
+
+    # 5) Собираем и сортируем по вашему плейтайму
+    sorted_common = sorted(common, key=lambda g: my_games[g], reverse=True)
+    lines = [
+        f"**{g}** — вы: {my_games[g]}ч, {user.display_name}: {their_games[g]}ч"
+        for g in sorted_common
+    ]
+    embed = Embed(
+        title=f'Общие игры с {user.display_name}',
+        description='\n'.join(lines)
+    )
+
+    # 6) Отправляем результат
+    await interaction.followup.send(embed=embed, ephemeral=False)
 
 @tasks.loop(time=time(0,10))
 async def daily_link_check():
