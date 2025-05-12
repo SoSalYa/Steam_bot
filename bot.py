@@ -2,7 +2,7 @@ import os
 import re
 import discord
 from discord.ext import commands, tasks
-from discord import app_commands, ui, Embed, Member. SelectOption
+from discord import app_commands, ui, Embed, Member, SelectOption
 from typing import List
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
