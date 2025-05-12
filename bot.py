@@ -183,18 +183,37 @@ class GamesView(ui.View):
         self.sort_asc = True                     # True = asc, False = desc
         self.filters: set[str] = set()           # текстовые фильтры
         self.message: discord.Message | None = None
-        self.update_buttons()
+        self._build_buttons()
 
-    def update_buttons(self):
+    def _build_buttons(self):
         self.clear_items()
-        self.add_item(ui.Button(custom_id='add_user',      style=discord.ButtonStyle.secondary, emoji='➕'))
-        self.add_item(ui.Button(custom_id='remove_user',   style=discord.ButtonStyle.secondary, emoji='➖'))
-        self.add_item(ui.Button(custom_id='choose_sort',   style=discord.ButtonStyle.secondary, emoji='📝'))
-        self.add_item(ui.Button(custom_id='choose_filters',style=discord.ButtonStyle.secondary, emoji='⚙️'))
-        self.add_item(ui.Button(custom_id='close',         style=discord.ButtonStyle.secondary, emoji='❌'))
+
+        # ➕ Добавить пользователя
+        btn_add = ui.Button(custom_id='add_user', style=discord.ButtonStyle.secondary, emoji='➕')
+        btn_add.callback = self.on_add_user
+        self.add_item(btn_add)
+
+        # ➖ Убрать пользователя
+        btn_rem = ui.Button(custom_id='remove_user', style=discord.ButtonStyle.secondary, emoji='➖')
+        btn_rem.callback = self.on_remove_user
+        self.add_item(btn_rem)
+
+        # 📝 Сортировка
+        btn_sort = ui.Button(custom_id='choose_sort', style=discord.ButtonStyle.secondary, emoji='📝')
+        btn_sort.callback = self.on_choose_sort
+        self.add_item(btn_sort)
+
+        # ⚙️ Фильтры
+        btn_filt = ui.Button(custom_id='choose_filters', style=discord.ButtonStyle.secondary, emoji='⚙️')
+        btn_filt.callback = self.on_choose_filters
+        self.add_item(btn_filt)
+
+        # ❌ Закрыть
+        btn_close = ui.Button(custom_id='close', style=discord.ButtonStyle.secondary, emoji='❌')
+        btn_close.callback = self.on_close
+        self.add_item(btn_close)
 
     async def render(self, interaction: discord.Interaction):
-        # 1) Деферим, если это первый раз
         if not interaction.response.is_done():
             await interaction.response.defer()
 
@@ -239,6 +258,9 @@ class GamesView(ui.View):
         embed.add_field(name="Фильтры",     value=", ".join(self.filters) or "все", inline=True)
         embed.add_field(name="Участники",   value=", ".join(u.display_name for u in self.users), inline=False)
 
+        # пересобираем кнопки перед выводом
+        self._build_buttons()
+
         # 8) Первый followup или редактирование
         try:
             if self.message is None:
@@ -246,11 +268,10 @@ class GamesView(ui.View):
             else:
                 await self.message.edit(embed=embed, view=self)
         except (discord.errors.NotFound, discord.errors.HTTPException):
-            # Если вдруг сообщение потерялося, сбрасываем и пробуем заново
+            # Если вдруг сообщение потерялось, сбрасываем и пробуем заново
             self.message = await interaction.followup.send(embed=embed, view=self)
 
-    @ui.button(custom_id='add_user',    style=discord.ButtonStyle.secondary, emoji='➕')
-    async def on_add_user(self, button, interaction):
+    async def on_add_user(self, button: ui.Button, interaction: discord.Interaction):
         options = [
             ui.SelectOption(label=m.display_name, value=str(m.id))
             for m in interaction.guild.members
@@ -269,8 +290,7 @@ class GamesView(ui.View):
         temp.add_item(select)
         await interaction.response.send_message("Выберите участника для добавления:", view=temp, ephemeral=True)
 
-    @ui.button(custom_id='remove_user', style=discord.ButtonStyle.secondary, emoji='➖')
-    async def on_remove_user(self, button, interaction):
+    async def on_remove_user(self, button: ui.Button, interaction: discord.Interaction):
         if len(self.users) <= 1:
             return await interaction.response.send_message("Нельзя убрать — останется 0 участников!", ephemeral=True)
         options = [ui.SelectOption(label=u.display_name, value=str(u.id)) for u in self.users]
@@ -285,8 +305,7 @@ class GamesView(ui.View):
         temp.add_item(select)
         await interaction.response.send_message("Выберите участника для удаления:", view=temp, ephemeral=True)
 
-    @ui.button(custom_id='choose_sort',   style=discord.ButtonStyle.secondary, emoji='📝')
-    async def on_choose_sort(self, button, interaction):
+    async def on_choose_sort(self, button: ui.Button, interaction: discord.Interaction):
         opts = [
             ui.SelectOption(label="По алфавиту",    value="alphabet"),
             ui.SelectOption(label="По вашим часам", value="you"),
@@ -303,8 +322,7 @@ class GamesView(ui.View):
         temp.add_item(select)
         await interaction.response.send_message("Выберите сортировку:", view=temp, ephemeral=True)
 
-    @ui.button(custom_id='choose_filters', style=discord.ButtonStyle.secondary, emoji='⚙️')
-    async def on_choose_filters(self, button, interaction):
+    async def on_choose_filters(self, button: ui.Button, interaction: discord.Interaction):
         opts = [
             ui.SelectOption(label="Co-op",    value="coop"),
             ui.SelectOption(label="Survival", value="survival"),
@@ -322,8 +340,7 @@ class GamesView(ui.View):
         temp.add_item(select)
         await interaction.response.send_message("Установите фильтры:", view=temp, ephemeral=True)
 
-    @ui.button(custom_id='close', style=discord.ButtonStyle.secondary, emoji='❌')
-    async def on_close(self, button, interaction):
+    async def on_close(self, button: ui.Button, interaction: discord.Interaction):
         await interaction.response.edit_message(content="Закрыто", embed=None, view=None)
         self.stop()
 
