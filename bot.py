@@ -236,15 +236,15 @@ class GamesView(ui.View):
         embed.add_field(name="Участники",   value=", ".join(u.display_name for u in self.users), inline=False)
 
         try:
-    # Первый ответ на команду
-    await interaction.response.send_message(embed=embed, view=self)
-except (discord.errors.InteractionResponded, discord.errors.NotFound):
-    try:
-        # Обновляем уже отправленное сообщение
-        await interaction.edit_original_response(embed=embed, view=self)
-    except discord.errors.NotFound:
-        # Если и его нет — шлём followup
-        await interaction.followup.send(embed=embed, view=self)
+         # Первый ответ на команду
+          await interaction.response.send_message(embed=embed, view=self)
+          except (discord.errors.InteractionResponded, discord.errors.NotFound):
+         try:
+          # Обновляем уже отправленное сообщение
+         await interaction.edit_original_response(embed=embed, view=self)
+         except discord.errors.NotFound:
+          # Если и его нет — шлём followup
+         await interaction.followup.send(embed=embed, view=self)
 
     @ui.button(custom_id='add_user', label='➕ Добавить участника', style=discord.ButtonStyle.primary)
     async def on_add_user(self, button: ui.Button, interaction: discord.Interaction):
