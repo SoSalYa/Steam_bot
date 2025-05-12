@@ -268,10 +268,10 @@ class GamesView(ui.View):
             else:
                 await self.message.edit(embed=embed, view=self)
         except (discord.errors.NotFound, discord.errors.HTTPException):
-            # Если вдруг сообщение потерялось, сбрасываем и пробуем заново
+            # Если вдруг сообщение потерялось, пробуем заново
             self.message = await interaction.followup.send(embed=embed, view=self)
 
-    async def on_add_user(self, button: ui.Button, interaction: discord.Interaction):
+    async def on_add_user(self, interaction: discord.Interaction):
         options = [
             ui.SelectOption(label=m.display_name, value=str(m.id))
             for m in interaction.guild.members
@@ -290,7 +290,7 @@ class GamesView(ui.View):
         temp.add_item(select)
         await interaction.response.send_message("Выберите участника для добавления:", view=temp, ephemeral=True)
 
-    async def on_remove_user(self, button: ui.Button, interaction: discord.Interaction):
+    async def on_remove_user(self, interaction: discord.Interaction):
         if len(self.users) <= 1:
             return await interaction.response.send_message("Нельзя убрать — останется 0 участников!", ephemeral=True)
         options = [ui.SelectOption(label=u.display_name, value=str(u.id)) for u in self.users]
@@ -305,7 +305,7 @@ class GamesView(ui.View):
         temp.add_item(select)
         await interaction.response.send_message("Выберите участника для удаления:", view=temp, ephemeral=True)
 
-    async def on_choose_sort(self, button: ui.Button, interaction: discord.Interaction):
+    async def on_choose_sort(self, interaction: discord.Interaction):
         opts = [
             ui.SelectOption(label="По алфавиту",    value="alphabet"),
             ui.SelectOption(label="По вашим часам", value="you"),
@@ -322,7 +322,7 @@ class GamesView(ui.View):
         temp.add_item(select)
         await interaction.response.send_message("Выберите сортировку:", view=temp, ephemeral=True)
 
-    async def on_choose_filters(self, button: ui.Button, interaction: discord.Interaction):
+    async def on_choose_filters(self, interaction: discord.Interaction):
         opts = [
             ui.SelectOption(label="Co-op",    value="coop"),
             ui.SelectOption(label="Survival", value="survival"),
@@ -340,9 +340,11 @@ class GamesView(ui.View):
         temp.add_item(select)
         await interaction.response.send_message("Установите фильтры:", view=temp, ephemeral=True)
 
-    async def on_close(self, button: ui.Button, interaction: discord.Interaction):
+    async def on_close(self, interaction: discord.Interaction):
         await interaction.response.edit_message(content="Закрыто", embed=None, view=None)
         self.stop()
+
+
 
 
 
