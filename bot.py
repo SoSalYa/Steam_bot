@@ -193,40 +193,36 @@ class GamesView(ui.View):
         self.add_item(ui.Button(label='❌ Закрыть',             style=discord.ButtonStyle.grey,     custom_id='close'))
 
     async def render(self, interaction: discord.Interaction):
+        # --- всё, что было у вас до создания embed ---
         # 1) Сбор данных
         records = init_gspread_client().worksheet('Games').get_all_records()
         data: dict[int, dict[str,int]] = {}
         for r in records:
             uid = int(r['discord_id'])
             data.setdefault(uid, {})[r['game_name']] = int(r['playtime'])
-
-        # 2) Найти общие
+        # 2) Найти пересечение
         sets = [set(data.get(u.id, {})) for u in self.users]
         common = set.intersection(*sets) if sets else set()
-
         # 3) Фильтры
         if self.filters:
             common = {g for g in common if any(f.lower() in g.lower() for f in self.filters)}
-
         # 4) Сортировка
         if self.sort_key == 'alphabet':
             sorted_list = sorted(common, reverse=not self.sort_asc)
         elif self.sort_key == 'you':
             me_map = data.get(self.ctx_user.id, {})
-            sorted_list = sorted(common, key=lambda g: me_map.get(g, 0), reverse=not self.sort_asc)
+            sorted_list = sorted(common, key=lambda g: me_map.get(g,0), reverse=not self.sort_asc)
         else:  # combined
-            sorted_list = sorted(common, key=lambda g: sum(data[u.id].get(g, 0) for u in self.users), reverse=not self.sort_asc)
-
+            sorted_list = sorted(common, key=lambda g: sum(data[u.id].get(g,0) for u in self.users), reverse=not self.sort_asc)
         # 5) Формируем строки
         lines = []
         for g in sorted_list:
             parts = [f"**{g}**"]
             for u in self.users:
-                hrs = data.get(u.id, {}).get(g, 0)
+                hrs = data.get(u.id, {}).get(g,0)
                 parts.append(f"{u.display_name}: {hrs}ч")
             lines.append(" — ".join(parts))
-
-        # 6) Embed
+        # 6) Собираем Embed
         embed = Embed(
             title=f"Общие игры ({len(sorted_list)})",
             description="\n".join(lines[:20]) or "Нет общих игр."
@@ -234,18 +230,13 @@ class GamesView(ui.View):
         embed.add_field(name="Сортировка", value=f"{self.sort_key}{'▲' if self.sort_asc else '▼'}", inline=True)
         embed.add_field(name="Фильтры",     value=", ".join(self.filters) or "все", inline=True)
         embed.add_field(name="Участники",   value=", ".join(u.display_name for u in self.users), inline=False)
-
-        # 7) Отправляем или редактируем
+        # 7) Отправляем через followup или редактируем исходное
         try:
-            # если ещё не отвечали на команду
-            await interaction.response.send_message(embed=embed, view=self)
-        except (discord.errors.InteractionResponded, discord.errors.NotFound):
-            try:
-                # редактируем первоначальный ответ
-                await interaction.edit_original_response(embed=embed, view=self)
-            except discord.errors.NotFound:
-                # fallback — новый followup
-                await interaction.followup.send(embed=embed, view=self)
+            # первый раз — followup
+            await interaction.followup.send(embed=embed, view=self)
+        except discord.errors.InvalidState:
+            # если followup уже был, правим его
+            await interaction.edit_original_response(embed=embed, view=self)
     
 
     @ui.button(custom_id='add_user', label='➕ Добавить участника', style=discord.ButtonStyle.primary)
@@ -472,9 +463,11 @@ async def find_teammates(interaction, игра: str):
 
 @bot.tree.command(name='общие_игры')
 async def common_games(interaction: discord.Interaction, user: Member):
-    # НЕ вызывать defer!
+    # бронируем ответ, чтобы можно было потом followup:
+    await interaction.response.defer(ephemeral=False)
     view = GamesView(interaction.user, [interaction.user, user])
     await view.render(interaction)
+
 
 @tasks.loop(time=time(0,10))
 async def daily_link_check():
