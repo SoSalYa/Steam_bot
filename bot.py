@@ -118,6 +118,11 @@ def get_profile_row(ws, discord_id):
             return idx, row
     return None, None
 
+def parse_steam_url(url: str) -> str | None:
+    m = STEAM_URL_REGEX.match(url)
+    if not m:
+        return None
+    return resolve_steamid(m.group(1))
 
 class ConfirmView(ui.View):
     def __init__(self, user_id: int, steam_url: str, profile_name: str, sheet):
