@@ -330,6 +330,9 @@ async def epic_free_check():
             dt = datetime.fromisoformat(r['offer_end'])
         except:
             continue
+        # сделаем naive-дату для сравнения
+        if dt.tzinfo is not None:
+            dt = dt.replace(tzinfo=None)
         if dt > now:
             keep.append([r['game_title'], r['offer_end']])
     vals = [HEADERS['SentEpic']] + keep
@@ -342,15 +345,19 @@ async def epic_free_check():
     new = []
     for game in offers:
         promos = game.get('promotions') or {}
-        for key in ('promotionalOffers','upcomingPromotionalOffers'):
+        for key in ('promotionalOffers', 'upcomingPromotionalOffers'):
             blocks = promos.get(key) or []
-            for entry in blocks:
-                for o in entry.get('promotionalOffers', []):
+            for block in blocks:
+                for o in block.get('promotionalOffers', []):
                     ts = o.get('endDate')
                     try:
+                        # может быть ISO с tz или Unix-ms
                         et = datetime.fromisoformat(ts) if 'T' in ts else datetime.fromtimestamp(int(ts)/1000)
                     except:
                         continue
+                    # убираем tzinfo, чтобы et и now были одного «вида»
+                    if et.tzinfo is not None:
+                        et = et.replace(tzinfo=None)
                     title = game.get('title')
                     if title in [x[0] for x in keep]:
                         continue
@@ -360,7 +367,7 @@ async def epic_free_check():
                             await ch.send(f'🎁 Бесплатно: {title} до {et.isoformat()}')
     if new:
         ews.append_rows(new, value_input_option='USER_ENTERED')
-
+        
 @tasks.loop(hours=168)
 async def health_check():
     mem = psutil.virtual_memory().percent
