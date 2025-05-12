@@ -2,7 +2,8 @@ import os
 import re
 import discord
 from discord.ext import commands, tasks
-from discord import app_commands, ui, Embed
+from discord import app_commands, ui, Embed, Member
+from typing import List
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import requests
@@ -173,6 +174,148 @@ class ConfirmView(ui.View):
         await interaction.response.send_message('❌ Привязка отменена.', ephemeral=True)
         self.stop()
 
+class GamesView(ui.View):
+    def __init__(self, ctx_user: Member, initial_users: List[Member]):
+        super().__init__(timeout=120)
+        self.ctx_user = ctx_user
+        self.users: List[Member] = initial_users[:]  # участники для сравнения
+        self.sort_key = 'alphabet'                  # 'alphabet', 'you', 'combined'
+        self.sort_asc = True                        # True = A→Z / мал→больш
+        self.filters: set[str] = set()              # метки-фильтры
+        self.update_buttons()
+
+    def update_buttons(self):
+        self.clear_items()
+        self.add_item(ui.Button(label='➕ Добавить участника', style=discord.ButtonStyle.primary, custom_id='add_user'))
+        self.add_item(ui.Button(label='✖️ Убрать участника',    style=discord.ButtonStyle.danger,  custom_id='remove_user'))
+        self.add_item(ui.Button(label='📝 Сортировка',          style=discord.ButtonStyle.secondary,custom_id='choose_sort'))
+        self.add_item(ui.Button(label='⚙️ Фильтры',            style=discord.ButtonStyle.secondary,custom_id='choose_filters'))
+        self.add_item(ui.Button(label='❌ Закрыть',             style=discord.ButtonStyle.grey,     custom_id='close'))
+
+    async def render(self, interaction):
+        # 1) Загружаем игровые данные всех участников
+        data = load_game_data()  # { user_id: {game_name: hrs} }
+
+        # 2) Находим пересечение библиотек
+        common = None
+        for u in self.users:
+            user_lib = data.get(u.id, {})
+            common = set(user_lib) if common is None else (common & set(user_lib))
+        common = common or set()
+
+        # 3) Применяем фильтры (пример, здесь можно самому добавить логику тегов)
+        #    if 'coop' in self.filters: common = {g for g in common if is_coop(g)}
+
+        # 4) Сортируем
+        if self.sort_key == 'alphabet':
+            sorted_list = sorted(common, reverse=not self.sort_asc)
+        elif self.sort_key == 'you':
+            sorted_list = sorted(common, key=lambda g: data[self.ctx_user.id].get(g,0), reverse=not self.sort_asc)
+        else:  # 'combined'
+            sorted_list = sorted(common, key=lambda g: sum(data[u.id].get(g,0) for u in self.users), reverse=not self.sort_asc)
+
+        # 5) Составляем embed
+        lines = []
+        for g in sorted_list:
+            parts = [f"{self.ctx_user.display_name}: {data[self.ctx_user.id].get(g,0)}ч"]
+            for u in self.users:
+                if u.id != self.ctx_user.id:
+                    parts.append(f"{u.display_name}: {data[u.id].get(g,0)}ч")
+            lines.append(f"**{g}** — " + ", ".join(parts))
+
+        desc = "\n".join(lines[:20]) or "Нет общих игр."
+        embed = Embed(title=f"Общие игры ({len(sorted_list)})", description=desc)
+        embed.add_field(name="Сортировка", value=f"{self.sort_key}{'▲' if self.sort_asc else '▼'}", inline=True)
+        embed.add_field(name="Фильтры",     value=", ".join(self.filters) or "все", inline=True)
+        embed.add_field(name="Участники",   value=", ".join(u.display_name for u in self.users), inline=False)
+
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    # ——— Кнопки ———
+
+    @ui.button(custom_id='add_user')
+    async def on_add_user(self, button: ui.Button, interaction):
+        # SelectMenu для добавления
+        options = [
+            ui.SelectOption(label=m.display_name, value=str(m.id))
+            for m in interaction.guild.members
+            if not m.bot and m not in self.users
+        ]
+        select = ui.Select(placeholder="Кого добавить?", options=options, custom_id='sel_add')
+
+        async def sel_add_cb(sel: ui.Select, sel_int):
+            uid = int(sel.values[0])
+            member = interaction.guild.get_member(uid)
+            if member: self.users.append(member)
+            await sel_int.response.edit_message(view=self)
+            await self.render(sel_int)
+
+        select.callback = sel_add_cb
+        view = ui.View()
+        view.add_item(select)
+        await interaction.response.send_message("Выберите участника для добавления:", view=view, ephemeral=True)
+
+    @ui.button(custom_id='remove_user')
+    async def on_remove_user(self, button: ui.Button, interaction):
+        if len(self.users) <= 1:
+            return await interaction.response.send_message("Нельзя убрать — останется 0 участников!", ephemeral=True)
+        options = [ui.SelectOption(label=u.display_name, value=str(u.id)) for u in self.users]
+        select = ui.Select(placeholder="Кого убрать?", options=options, custom_id='sel_rem')
+
+        async def sel_rem_cb(sel, sel_int):
+            uid = int(sel.values[0])
+            self.users = [u for u in self.users if u.id != uid]
+            await sel_int.response.edit_message(view=self)
+            await self.render(sel_int)
+
+        select.callback = sel_rem_cb
+        view = ui.View()
+        view.add_item(select)
+        await interaction.response.send_message("Выберите участника для удаления:", view=view, ephemeral=True)
+
+    @ui.button(custom_id='choose_sort')
+    async def on_choose_sort(self, button, interaction):
+        opts = [
+            ui.SelectOption(label="По алфавиту", value="alphabet"),
+            ui.SelectOption(label="По вашим часам", value="you"),
+            ui.SelectOption(label="По сумме часов", value="combined"),
+        ]
+        select = ui.Select(placeholder="Выберите сортировку", options=opts, custom_id='sel_sort')
+
+        async def sel_sort_cb(sel, sel_int):
+            self.sort_key = sel.values[0]
+            await sel_int.response.edit_message(view=self)
+            await self.render(sel_int)
+
+        select.callback = sel_sort_cb
+        view = ui.View()
+        view.add_item(select)
+        await interaction.response.send_message("Выберите сортировку:", view=view, ephemeral=True)
+
+    @ui.button(custom_id='choose_filters')
+    async def on_choose_filters(self, button, interaction):
+        opts = [
+            ui.SelectOption(label="Co-op", value="coop"),
+            ui.SelectOption(label="Survival", value="survival"),
+            ui.SelectOption(label="Horror", value="horror"),
+        ]
+        select = ui.Select(placeholder="Выберите фильтры", options=opts, custom_id='sel_filt', min_values=0, max_values=len(opts))
+
+        async def sel_filt_cb(sel, sel_int):
+            self.filters = set(sel.values)
+            await sel_int.response.edit_message(view=self)
+            await self.render(sel_int)
+
+        select.callback = sel_filt_cb
+        view = ui.View()
+        view.add_item(select)
+        await interaction.response.send_message("Установите фильтры:", view=view, ephemeral=True)
+
+    @ui.button(custom_id='close')
+    async def on_close(self, button, interaction):
+        await interaction.response.edit_message(content="Закрыто", embed=None, view=None)
+        self.stop()
+
 # === Bot Setup ===
 bot = commands.Bot(command_prefix=PREFIX, intents=INTENTS)
 
@@ -310,63 +453,11 @@ async def find_teammates(interaction, игра: str):
     mentions = [f"{interaction.guild.get_member(int(uid)).mention} ({hrs}ч)" for uid, hrs in sorted(matches, key=lambda x: x[1], reverse=True) if interaction.guild.get_member(int(uid))]
     await interaction.followup.send(', '.join(mentions), ephemeral=True)
 
-@bot.tree.command(name='общие_игры', description='Показать общие игры с пользователем')
-@app_commands.describe(user='Пользователь для сравнения')
-async def common_games(interaction: discord.Interaction, user: discord.Member):
-    # 1) Мы ответим чуть позже
-    await interaction.response.defer(ephemeral=True)
-
-    # 2) Считываем всё из листа "Games"
-    records = init_gspread_client().worksheet('Games').get_all_records()
-    data: dict[int, dict[str,int]] = {}
-    for r in records:
-        try:
-            uid = int(r['discord_id'])
-            playtime = int(r['playtime'])
-            gamename = r['game_name']
-        except (KeyError, ValueError):
-            continue
-        data.setdefault(uid, {})[gamename] = playtime
-
-    me_id = interaction.user.id
-    ot_id = user.id
-
-    # 3) Проверяем, есть ли у нас и у оппонента данные
-    if me_id not in data:
-        return await interaction.followup.send(
-            '❌ У вас нет сохранённых игр. Привяжите Steam командой `/привязать_steam`.',
-            ephemeral=True
-        )
-    if ot_id not in data:
-        return await interaction.followup.send(
-            f'❌ У {user.display_name} нет сохранённых игр.',
-            ephemeral=True
-        )
-
-    # 4) Ищем пересечение
-    my_games = data[me_id]
-    their_games = data[ot_id]
-    common = set(my_games).intersection(their_games)
-
-    if not common:
-        return await interaction.followup.send(
-            'ℹ️ Общих игр не найдено.',
-            ephemeral=True
-        )
-
-    # 5) Собираем и сортируем по вашему плейтайму
-    sorted_common = sorted(common, key=lambda g: my_games[g], reverse=True)
-    lines = [
-        f"**{g}** — вы: {my_games[g]}ч, {user.display_name}: {their_games[g]}ч"
-        for g in sorted_common
-    ]
-    embed = Embed(
-        title=f'Общие игры с {user.display_name}',
-        description='\n'.join(lines)
-    )
-
-    # 6) Отправляем результат
-    await interaction.followup.send(embed=embed, ephemeral=False)
+@bot.tree.command(name='общие_игры')
+async def common_games(interaction: discord.Interaction, user: Member):
+    await interaction.response.defer(ephemeral=False)
+    view = GamesView(interaction.user, [interaction.user, user])
+    await view.render(interaction)
 
 @tasks.loop(time=time(0,10))
 async def daily_link_check():
