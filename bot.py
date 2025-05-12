@@ -344,29 +344,34 @@ async def epic_free_check():
     ch = bot.get_channel(EPIC_CHANNEL_ID)
     new = []
     for game in offers:
-        promos = game.get('promotions') or {}
-        for key in ('promotionalOffers', 'upcomingPromotionalOffers'):
-            blocks = promos.get(key) or []
-            for block in blocks:
-                for o in block.get('promotionalOffers', []):
-                    ts = o.get('endDate')
-                    try:
-                        # может быть ISO с tz или Unix-ms
-                        et = datetime.fromisoformat(ts) if 'T' in ts else datetime.fromtimestamp(int(ts)/1000)
-                    except:
-                        continue
-                    # убираем tzinfo, чтобы et и now были одного «вида»
-                    if et.tzinfo is not None:
-                        et = et.replace(tzinfo=None)
-                    title = game.get('title')
-                    if title in [x[0] for x in keep]:
-                        continue
-                    if et > now:
+         promos = game.get('promotions') or {}
+         for key in ('promotionalOffers', 'upcomingPromotionalOffers'):
+             blocks = promos.get(key) or []
+             for block in blocks:
+                 for o in block.get('promotionalOffers', []):
+                     ts = o.get('endDate')
+                     try:
+                         et = datetime.fromisoformat(ts) if 'T' in ts else datetime.fromtimestamp(int(ts)/1000)
+                     except:
+                         continue
+                     if et.tzinfo is not None:
+                         et = et.replace(tzinfo=None)
+                     title = game.get('title')
+                     if title in [x[0] for x in keep]:
+                         continue
+                     if et > now:
                         new.append([title, et.isoformat()])
                         if ch:
-                            await ch.send(f'🎁 Бесплатно: {title} до {et.isoformat()}')
-    if new:
-        ews.append_rows(new, value_input_option='USER_ENTERED')
+                            # формируем ссылку на Epic Store (RU)
+                            slug = game.get('productSlug') or game.get('catalogNs', {}).get('mappings', [{}])[0].get('pageSlug')
+                            url = f"https://www.epicgames.com/store/ru/p/{slug}" if slug else title
+                            # дискорд-таймстамп
+                            ts_unix = int(et.timestamp())
+                            await ch.send(
+                                f"🎁 Бесплатно: [{title}]({url}) до <t:{ts_unix}:R>"
+                            )
+     if new:
+         ews.append_rows(new, value_input_option='USER_ENTERED')
         
 @tasks.loop(hours=168)
 async def health_check():
