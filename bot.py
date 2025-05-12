@@ -3,6 +3,7 @@ import re
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands, Embed
+from discord import ui, Embed
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import requests
@@ -116,6 +117,57 @@ def get_profile_row(ws, discord_id):
         if row and row[0] == str(discord_id):
             return idx, row
     return None, None
+
+
+class ConfirmView(ui.View):
+    def __init__(self, user_id: int, steam_url: str, profile_name: str, sheet):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+        self.steam_url = steam_url
+        self.profile_name = profile_name
+        self.sheet = sheet
+
+    @ui.button(label='Да', style=discord.ButtonStyle.green)
+    async def confirm(self, interaction: discord.Interaction, button: ui.Button):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message('Это не ваш запрос.', ephemeral=True)
+
+        # --- записываем профиль в Google Sheets ---
+        p_ws = self.sheet.worksheet('Profiles')
+        idx, row = get_profile_row(p_ws, self.user_id)
+        now_iso = datetime.utcnow().isoformat()
+        if idx:
+            p_ws.update(range_name=f'B{idx}:C{idx}', values=[[self.steam_url, now_iso]])
+        else:
+            p_ws.append_row([str(self.user_id), self.steam_url, now_iso])
+
+        # --- обновляем Games одним батчем ---
+        steamid = parse_steam_url(self.steam_url)
+        games = fetch_owned_games(steamid) if steamid else {}
+        g_ws = self.sheet.worksheet('Games')
+        old = [r for r in g_ws.get_all_values()[1:] if r[0] != str(self.user_id)]
+        batch = [HEADERS['Games']] + old + [[str(self.user_id), name, str(hrs)] for name, hrs in games.items()]
+        g_ws.clear()
+        g_ws.append_rows(batch, value_input_option='USER_ENTERED')
+
+        # --- даём роль и отвечаем ---
+        role = discord.utils.get(interaction.guild.roles, name='подвязан стим')
+        member = interaction.guild.get_member(self.user_id)
+        if role and member:
+            try:
+                await member.add_roles(role)
+            except discord.Forbidden:
+                pass
+
+        await interaction.response.send_message(f'✅ Профиль `{self.profile_name}` привязан!', ephemeral=True)
+        self.stop()
+
+    @ui.button(label='Нет', style=discord.ButtonStyle.red)
+    async def reject(self, interaction: discord.Interaction, button: ui.Button):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message('Это не ваш запрос.', ephemeral=True)
+        await interaction.response.send_message('❌ Привязка отменена.', ephemeral=True)
+        self.stop()
 
 # === Bot Setup ===
 bot = commands.Bot(command_prefix=PREFIX, intents=INTENTS)
