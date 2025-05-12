@@ -165,19 +165,26 @@ async def on_member_update(before, after):
 # === Slash Commands ===
 @bot.tree.command(name='привязать_steam')
 @app_commands.describe(steam_url='Ссылка на профиль Steam')
-async def link_steam(interaction, steam_url: str):
-       # Логируем вход в команду
-    print(f"[link_steam] user={interaction.user.id} url={steam_url} interaction_id={interaction.id}")
-    # Откладываем ответ, чтобы у нас была возможность слать followup
-    await interaction.response.defer(thinking=True, ephemeral=True)
-    m = STEAM_URL_REGEX.match(steam_url)
-    if not m:
-        return await safe_respond(interaction, content='❌ Некорректная ссылка.', ephemeral=True)
+async def link_steam(interaction: discord.Interaction, steam_url: str):
     sh = init_gspread_client()
-    pws = sh.worksheet('Profiles')
+    try:
+        p_ws = sh.worksheet('Profiles')
+        idx, row = get_profile_row(p_ws, interaction.user.id)
+    except gspread.exceptions.APIError:
+        return await interaction.response.send_message(
+            '❗ Google Sheets временно недоступен, попробуйте через минуту.',
+            ephemeral=True
+        )
+
+    # Теперь idx и row гарантированно определены
+    if idx and row[1] == steam_url:
+        return await interaction.response.send_message(
+            'ℹ️ Вы уже привязали этот профиль.',
+            ephemeral=True
+        )
+
     if idx and row[2]:
         last = datetime.fromisoformat(row[2])
-        # только если прошло меньше BIND_TTL_HOURS и не пропущен TTL
         if datetime.utcnow() - last < timedelta(hours=BIND_TTL_HOURS) and not SKIP_BIND_TTL:
             sh.worksheet('Blocked').append_row([str(interaction.user.id), 'Частая привязка'])
             return await interaction.response.send_message(
@@ -328,30 +335,29 @@ async def epic_free_check():
     vals = [HEADERS['SentEpic']] + keep
     ews.clear()
     ews.append_rows(vals, value_input_option='USER_ENTERED')
+
     data = requests.get(EPIC_API_URL).json().get('data', {})
     offers = data.get('Catalog', {}).get('searchStore', {}).get('elements', [])
     ch = bot.get_channel(EPIC_CHANNEL_ID)
     new = []
     for game in offers:
-        promo_list = []
+        promos = game.get('promotions') or {}
         for key in ('promotionalOffers','upcomingPromotionalOffers'):
-            blocks = game.get('promotions', {}).get(key) or []
-            for block in blocks:
-                promo_list += block.get('promotionalOffers', [])
-        for o in promo_list:
-            ts = o.get('endDate')
-            try:
-                # поддерживаем ISO и Unix-ms
-                et = datetime.fromisoformat(ts) if 'T' in ts else datetime.fromtimestamp(int(ts)/1000)
-            except:
-                continue
-            title = game.get('title')
-            if title in [x[0] for x in keep]:
-                continue
-            if et > now:
-                new.append([title, et.isoformat()])
-                if ch:
-                    await ch.send(f'🎁 Бесплатно: {title} до {et.isoformat()}')
+            blocks = promos.get(key) or []
+            for entry in blocks:
+                for o in entry.get('promotionalOffers', []):
+                    ts = o.get('endDate')
+                    try:
+                        et = datetime.fromisoformat(ts) if 'T' in ts else datetime.fromtimestamp(int(ts)/1000)
+                    except:
+                        continue
+                    title = game.get('title')
+                    if title in [x[0] for x in keep]:
+                        continue
+                    if et > now:
+                        new.append([title, et.isoformat()])
+                        if ch:
+                            await ch.send(f'🎁 Бесплатно: {title} до {et.isoformat()}')
     if new:
         ews.append_rows(new, value_input_option='USER_ENTERED')
 
