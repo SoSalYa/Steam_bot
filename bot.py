@@ -175,71 +175,82 @@ class ConfirmView(ui.View):
         self.stop()
 
 class GamesView(ui.View):
-    def __init__(self, ctx_user: Member, initial_users: List[Member]):
+    def __init__(self, ctx_user: discord.Member, initial_users: List[discord.Member]):
         super().__init__(timeout=120)
         self.ctx_user = ctx_user
-        self.users: List[Member] = initial_users[:]  # участники для сравнения
-        self.sort_key = 'alphabet'                  # 'alphabet', 'you', 'combined'
-        self.sort_asc = True                        # True = asc, False = desc
-        self.filters: set[str] = set()              # текстовые фильтры
-        self.update_buttons()
+        self.users = initial_users[:]     # кто участвует
+        self.sort_key = 'alphabet'        # 'alphabet', 'you', 'combined'
+        self.sort_asc = True              # True = по возрастанию
+        self.filters: set[str] = set()    # текстовые фильтры
+        self.message: discord.Message | None = None
+        self._build_buttons()
 
-    def update_buttons(self):
+    def _build_buttons(self):
         self.clear_items()
-        self.add_item(ui.Button(label='➕ Добавить участника', style=discord.ButtonStyle.primary, custom_id='add_user'))
-        self.add_item(ui.Button(label='✖️ Убрать участника',    style=discord.ButtonStyle.danger,  custom_id='remove_user'))
-        self.add_item(ui.Button(label='📝 Сортировка',          style=discord.ButtonStyle.secondary,custom_id='choose_sort'))
-        self.add_item(ui.Button(label='⚙️ Фильтры',            style=discord.ButtonStyle.secondary,custom_id='choose_filters'))
-        self.add_item(ui.Button(label='❌ Закрыть',             style=discord.ButtonStyle.grey,     custom_id='close'))
+        # все кнопки белые (secondary) и без текста, только эмодзи
+        self.add_item(ui.Button(emoji="➕", style=discord.ButtonStyle.secondary, custom_id="add_user"))
+        self.add_item(ui.Button(emoji="❌", style=discord.ButtonStyle.secondary, custom_id="remove_user"))
+        self.add_item(ui.Button(emoji="📝", style=discord.ButtonStyle.secondary, custom_id="choose_sort"))
+        self.add_item(ui.Button(emoji="⚙️", style=discord.ButtonStyle.secondary, custom_id="choose_filters"))
+        self.add_item(ui.Button(emoji="✖️", style=discord.ButtonStyle.secondary, custom_id="close"))
 
     async def render(self, interaction: discord.Interaction):
-        # --- всё, что было у вас до создания embed ---
-        # 1) Сбор данных
+        # 1) Собираем данные
         records = init_gspread_client().worksheet('Games').get_all_records()
         data: dict[int, dict[str,int]] = {}
         for r in records:
             uid = int(r['discord_id'])
             data.setdefault(uid, {})[r['game_name']] = int(r['playtime'])
-        # 2) Найти пересечение
+
+        # 2) Общие
         sets = [set(data.get(u.id, {})) for u in self.users]
         common = set.intersection(*sets) if sets else set()
-        # 3) Фильтры
+
+        # 3) Фильтрация по тексту
         if self.filters:
             common = {g for g in common if any(f.lower() in g.lower() for f in self.filters)}
+
         # 4) Сортировка
         if self.sort_key == 'alphabet':
             sorted_list = sorted(common, reverse=not self.sort_asc)
         elif self.sort_key == 'you':
             me_map = data.get(self.ctx_user.id, {})
             sorted_list = sorted(common, key=lambda g: me_map.get(g,0), reverse=not self.sort_asc)
-        else:  # combined
-            sorted_list = sorted(common, key=lambda g: sum(data[u.id].get(g,0) for u in self.users), reverse=not self.sort_asc)
-        # 5) Формируем строки
+        else:  # 'combined'
+            sorted_list = sorted(
+                common,
+                key=lambda g: sum(data[u.id].get(g,0) for u in self.users),
+                reverse=not self.sort_asc
+            )
+
+        # 5) Формируем текст
         lines = []
         for g in sorted_list:
             parts = [f"**{g}**"]
             for u in self.users:
-                hrs = data.get(u.id, {}).get(g,0)
+                hrs = data.get(u.id, {}).get(g, 0)
                 parts.append(f"{u.display_name}: {hrs}ч")
             lines.append(" — ".join(parts))
+
         # 6) Собираем Embed
         embed = Embed(
             title=f"Общие игры ({len(sorted_list)})",
             description="\n".join(lines[:20]) or "Нет общих игр."
         )
-        embed.add_field(name="Сортировка", value=f"{self.sort_key}{'▲' if self.sort_asc else '▼'}", inline=True)
+        arrow = "▲" if self.sort_asc else "▼"
+        embed.add_field(name="Сортировка", value=f"{self.sort_key} {arrow}", inline=True)
         embed.add_field(name="Фильтры",     value=", ".join(self.filters) or "все", inline=True)
         embed.add_field(name="Участники",   value=", ".join(u.display_name for u in self.users), inline=False)
-        # 7) Отправляем через followup или редактируем исходное
-        try:
-            # первый раз — followup
-            await interaction.followup.send(embed=embed, view=self)
-        except discord.errors.InvalidState:
-            # если followup уже был, правим его
-            await interaction.edit_original_response(embed=embed, view=self)
-    
 
-    @ui.button(custom_id='add_user', label='➕ Добавить участника', style=discord.ButtonStyle.primary)
+        # 7) Отправка или правка
+        if self.message is None:
+            # первое сообщение — через followup после defer
+            self.message = await interaction.followup.send(embed=embed, view=self)
+        else:
+            # правим уже отправленное
+            await self.message.edit(embed=embed, view=self)
+
+    @ui.button(custom_id='add_user', emoji="➕")
     async def on_add_user(self, button: ui.Button, interaction: discord.Interaction):
         options = [
             ui.SelectOption(label=m.display_name, value=str(m.id))
@@ -247,81 +258,61 @@ class GamesView(ui.View):
             if not m.bot and m not in self.users
         ]
         select = ui.Select(placeholder="Кого добавить?", options=options, custom_id='sel_add')
-
         async def sel_add_cb(sel: ui.Select, sel_int: discord.Interaction):
-            uid = int(sel.values[0])
-            member = interaction.guild.get_member(uid)
-            if member:
-                self.users.append(member)
+            member = interaction.guild.get_member(int(sel.values[0]))
+            if member: self.users.append(member)
             await self.render(sel_int)
-
         select.callback = sel_add_cb
-        view = ui.View()
-        view.add_item(select)
-        await interaction.response.send_message("Выберите участника для добавления:", view=view, ephemeral=True)
+        await interaction.response.send_message("Выберите для добавления:", view=ui.View(select), ephemeral=True)
 
-    @ui.button(custom_id='remove_user', label='✖️ Убрать участника', style=discord.ButtonStyle.danger)
+    @ui.button(custom_id='remove_user', emoji="❌")
     async def on_remove_user(self, button: ui.Button, interaction: discord.Interaction):
         if len(self.users) <= 1:
-            return await interaction.response.send_message("Нельзя убрать — останется 0 участников!", ephemeral=True)
+            return await interaction.response.send_message("Нельзя убрать — останется 0!", ephemeral=True)
         options = [ui.SelectOption(label=u.display_name, value=str(u.id)) for u in self.users]
         select = ui.Select(placeholder="Кого убрать?", options=options, custom_id='sel_rem')
-
         async def sel_rem_cb(sel: ui.Select, sel_int: discord.Interaction):
             uid = int(sel.values[0])
             self.users = [u for u in self.users if u.id != uid]
             await self.render(sel_int)
-
         select.callback = sel_rem_cb
-        view = ui.View()
-        view.add_item(select)
-        await interaction.response.send_message("Выберите участника для удаления:", view=view, ephemeral=True)
+        await interaction.response.send_message("Выберите для удаления:", view=ui.View(select), ephemeral=True)
 
-    @ui.button(custom_id='choose_sort', label='📝 Сортировка', style=discord.ButtonStyle.secondary)
+    @ui.button(custom_id='choose_sort', emoji="📝")
     async def on_choose_sort(self, button: ui.Button, interaction: discord.Interaction):
         opts = [
-            ui.SelectOption(label="По алфавиту", value="alphabet"),
+            ui.SelectOption(label="По алфавиту",    value="alphabet"),
             ui.SelectOption(label="По вашим часам", value="you"),
-            ui.SelectOption(label="По сумме часов", value="combined"),
+            ui.SelectOption(label="По сумме",       value="combined"),
         ]
-        select = ui.Select(placeholder="Выберите сортировку", options=opts, custom_id='sel_sort')
-
+        select = ui.Select(placeholder="Сортировка", options=opts, custom_id='sel_sort')
         async def sel_sort_cb(sel: ui.Select, sel_int: discord.Interaction):
             self.sort_key = sel.values[0]
             await self.render(sel_int)
-
         select.callback = sel_sort_cb
-        view = ui.View()
-        view.add_item(select)
-        await interaction.response.send_message("Выберите сортировку:", view=view, ephemeral=True)
+        await interaction.response.send_message("Выберите сортировку:", view=ui.View(select), ephemeral=True)
 
-    @ui.button(custom_id='choose_filters', label='⚙️ Фильтры', style=discord.ButtonStyle.secondary)
+    @ui.button(custom_id='choose_filters', emoji="⚙️")
     async def on_choose_filters(self, button: ui.Button, interaction: discord.Interaction):
-        # Пример фильтров, расширяй под свои нужды
+        # ваши фильтры — расширяйте при необходимости
         opts = [
             ui.SelectOption(label="Co-op",    value="coop"),
             ui.SelectOption(label="Survival", value="survival"),
             ui.SelectOption(label="Horror",   value="horror"),
         ]
-        select = ui.Select(
-            placeholder="Установите фильтры",
-            options=opts,
-            custom_id='sel_filt',
-            min_values=0,
-            max_values=len(opts)
-        )
+        select = ui.Select(placeholder="Фильтры", options=opts, custom_id='sel_filt',
+                           min_values=0, max_values=len(opts))
         async def sel_filt_cb(sel: ui.Select, sel_int: discord.Interaction):
             self.filters = set(sel.values)
             await self.render(sel_int)
         select.callback = sel_filt_cb
-        view = ui.View()
-        view.add_item(select)
-        await interaction.response.send_message("Установите фильтры:", view=view, ephemeral=True)
+        await interaction.response.send_message("Установите фильтры:", view=ui.View(select), ephemeral=True)
 
-    @ui.button(custom_id='close', label='❌ Закрыть', style=discord.ButtonStyle.grey)
+    @ui.button(custom_id='close', emoji="✖️")
     async def on_close(self, button: ui.Button, interaction: discord.Interaction):
-        await interaction.response.edit_message(content="Закрыто", embed=None, view=None)
+        await self.message.delete()
         self.stop()
+
 
 
 # === Bot Setup ===
