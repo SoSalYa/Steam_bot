@@ -455,7 +455,7 @@ async def find_teammates(interaction, игра: str):
 
 @bot.tree.command(name='общие_игры')
 async def common_games(interaction: discord.Interaction, user: Member):
-    await interaction.response.defer(ephemeral=False)
+    # НЕ вызывать defer!
     view = GamesView(interaction.user, [interaction.user, user])
     await view.render(interaction)
 
