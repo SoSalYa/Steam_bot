@@ -355,7 +355,9 @@ async def epic_free_check():
 
     # Получаем новые раздачи
     data = requests.get(EPIC_API_URL).json().get('data', {})
-    offers = data.get('Catalog', {}).get('searchStore', {}).get('elements', [])
+    offers = data.get('Catalog', {}) \
+                 .get('searchStore', {}) \
+                 .get('elements', [])
     ch = bot.get_channel(EPIC_CHANNEL_ID)
     new = []
 
@@ -387,7 +389,10 @@ async def epic_free_check():
                                         .get('mappings', [{}])[0]
                                         .get('pageSlug')
                             )
-                            url = f"https://www.epicgames.com/store/ru/p/{slug}" if slug else None
+                            url = (
+                                f"https://www.epicgames.com/store/ru/p/{slug}"
+                                if slug else None
+                            )
                             ts_unix = int(et.timestamp())
                             await ch.send(
                                 f"🎁 Бесплатно: [{title}]({url}) до <t:{ts_unix}:R>"
