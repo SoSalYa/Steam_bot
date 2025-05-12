@@ -235,11 +235,16 @@ class GamesView(ui.View):
         embed.add_field(name="Фильтры",     value=", ".join(self.filters) or "все",  inline=True)
         embed.add_field(name="Участники",   value=", ".join(u.display_name for u in self.users), inline=False)
 
-        # 7) Отправляем или редактируем сообщение
-        if not interaction.response.is_done():
-            await interaction.response.send_message(embed=embed, view=self)
-        else:
-            await interaction.edit_original_response(embed=embed, view=self)
+        try:
+    # Первый ответ на команду
+    await interaction.response.send_message(embed=embed, view=self)
+except (discord.errors.InteractionResponded, discord.errors.NotFound):
+    try:
+        # Обновляем уже отправленное сообщение
+        await interaction.edit_original_response(embed=embed, view=self)
+    except discord.errors.NotFound:
+        # Если и его нет — шлём followup
+        await interaction.followup.send(embed=embed, view=self)
 
     @ui.button(custom_id='add_user', label='➕ Добавить участника', style=discord.ButtonStyle.primary)
     async def on_add_user(self, button: ui.Button, interaction: discord.Interaction):
