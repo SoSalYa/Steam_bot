@@ -192,45 +192,25 @@ class GamesView(ui.View):
         self.add_item(ui.Button(label='⚙️ Фильтры',            style=discord.ButtonStyle.secondary,custom_id='choose_filters'))
         self.add_item(ui.Button(label='❌ Закрыть',             style=discord.ButtonStyle.grey,     custom_id='close'))
 
-    async def render(self, interaction):
-        # 1) Загружаем игровые данные всех участников
-        data = load_game_data()  # { user_id: {game_name: hrs} }
+    async def render(self, interaction: discord.Interaction):
+    # ——— Ваша текущая логика подготовки embed и списка игр ———
+    # (сбор данных, фильтрация, сортировка, формирование lines и т.д.)
 
-        # 2) Находим пересечение библиотек
-        common = None
-        for u in self.users:
-            user_lib = data.get(u.id, {})
-            common = set(user_lib) if common is None else (common & set(user_lib))
-        common = common or set()
+    embed = Embed(
+        title=f"Общие игры ({len(sorted_list)})",
+        description="\n".join(lines[:20]) or "Нет общих игр."
+    )
+    embed.add_field(name="Сортировка", value=f"{self.sort_key}{'▲' if self.sort_asc else '▼'}", inline=True)
+    embed.add_field(name="Фильтры",     value=", ".join(self.filters) or "все", inline=True)
+    embed.add_field(name="Участники",   value=", ".join(u.display_name for u in self.users), inline=False)
 
-        # 3) Применяем фильтры (пример, здесь можно самому добавить логику тегов)
-        #    if 'coop' in self.filters: common = {g for g in common if is_coop(g)}
-
-        # 4) Сортируем
-        if self.sort_key == 'alphabet':
-            sorted_list = sorted(common, reverse=not self.sort_asc)
-        elif self.sort_key == 'you':
-            sorted_list = sorted(common, key=lambda g: data[self.ctx_user.id].get(g,0), reverse=not self.sort_asc)
-        else:  # 'combined'
-            sorted_list = sorted(common, key=lambda g: sum(data[u.id].get(g,0) for u in self.users), reverse=not self.sort_asc)
-
-        # 5) Составляем embed
-        lines = []
-        for g in sorted_list:
-            parts = [f"{self.ctx_user.display_name}: {data[self.ctx_user.id].get(g,0)}ч"]
-            for u in self.users:
-                if u.id != self.ctx_user.id:
-                    parts.append(f"{u.display_name}: {data[u.id].get(g,0)}ч")
-            lines.append(f"**{g}** — " + ", ".join(parts))
-
-        desc = "\n".join(lines[:20]) or "Нет общих игр."
-        embed = Embed(title=f"Общие игры ({len(sorted_list)})", description=desc)
-        embed.add_field(name="Сортировка", value=f"{self.sort_key}{'▲' if self.sort_asc else '▼'}", inline=True)
-        embed.add_field(name="Фильтры",     value=", ".join(self.filters) or "все", inline=True)
-        embed.add_field(name="Участники",   value=", ".join(u.display_name for u in self.users), inline=False)
-
-        await interaction.response.edit_message(embed=embed, view=self)
-
+    # ——— Отправляем первый раз или редактируем уже существующее ———
+    if not interaction.response.is_done():
+        # Первый отклик на команду
+        await interaction.response.send_message(embed=embed, view=self)
+    else:
+        # При кликах по кнопкам
+        await interaction.edit_original_response(embed=embed, view=self)
     # ——— Кнопки ———
 
     @ui.button(custom_id='add_user')
