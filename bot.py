@@ -178,16 +178,15 @@ class GamesView(ui.View):
     def __init__(self, ctx_user: discord.Member, initial_users: List[discord.Member]):
         super().__init__(timeout=120)
         self.ctx_user = ctx_user
-        self.users = initial_users[:]             # участники для сравнения
-        self.sort_key = 'alphabet'                # 'alphabet', 'you', 'combined'
-        self.sort_asc = True                      # True = asc, False = desc
-        self.filters: set[str] = set()            # текстовые фильтры
+        self.users = initial_users[:]            # участники
+        self.sort_key = 'alphabet'               # 'alphabet', 'you', 'combined'
+        self.sort_asc = True                     # True = asc, False = desc
+        self.filters: set[str] = set()           # текстовые фильтры
         self.message: discord.Message | None = None
         self.update_buttons()
 
     def update_buttons(self):
         self.clear_items()
-        # Эмодзи: ➕ и ➖ вместо ✖️
         self.add_item(ui.Button(custom_id='add_user',      style=discord.ButtonStyle.secondary, emoji='➕'))
         self.add_item(ui.Button(custom_id='remove_user',   style=discord.ButtonStyle.secondary, emoji='➖'))
         self.add_item(ui.Button(custom_id='choose_sort',   style=discord.ButtonStyle.secondary, emoji='📝'))
@@ -195,44 +194,43 @@ class GamesView(ui.View):
         self.add_item(ui.Button(custom_id='close',         style=discord.ButtonStyle.secondary, emoji='❌'))
 
     async def render(self, interaction: discord.Interaction):
-        # Собираем данные
+        # 1) Деферим, если это первый раз
+        if not interaction.response.is_done():
+            await interaction.response.defer()
+
+        # 2) Читаем и готовим данные
         records = init_gspread_client().worksheet('Games').get_all_records()
         data: dict[int, dict[str,int]] = {}
         for r in records:
             uid = int(r['discord_id'])
             data.setdefault(uid, {})[r['game_name']] = int(r['playtime'])
-
-        # Находим общие игры
+        # 3) Находим общие
         sets = [set(data.get(u.id, {})) for u in self.users]
         common = set.intersection(*sets) if sets else set()
-
-        # Фильтруем
+        # 4) Фильтры
         if self.filters:
             common = {g for g in common if any(f.lower() in g.lower() for f in self.filters)}
-
-        # Сортируем
+        # 5) Сортировка
         if self.sort_key == 'alphabet':
             sorted_list = sorted(common, reverse=not self.sort_asc)
         elif self.sort_key == 'you':
             me_map = data.get(self.ctx_user.id, {})
-            sorted_list = sorted(common, key=lambda g: me_map.get(g, 0), reverse=not self.sort_asc)
+            sorted_list = sorted(common, key=lambda g: me_map.get(g,0), reverse=not self.sort_asc)
         else:  # combined
             sorted_list = sorted(
                 common,
-                key=lambda g: sum(data[u.id].get(g, 0) for u in self.users),
+                key=lambda g: sum(data[u.id].get(g,0) for u in self.users),
                 reverse=not self.sort_asc
             )
-
-        # Формируем текст
+        # 6) Формируем текст
         lines = []
         for g in sorted_list:
             parts = [f"**{g}**"]
             for u in self.users:
-                hrs = data.get(u.id, {}).get(g, 0)
+                hrs = data.get(u.id, {}).get(g,0)
                 parts.append(f"{u.display_name}: {hrs}ч")
             lines.append(" — ".join(parts))
-
-        # Создаём Embed
+        # 7) Собираем embed
         embed = Embed(
             title=f"Общие игры ({len(sorted_list)})",
             description="\n".join(lines[:20]) or "Нет общих игр."
@@ -241,16 +239,18 @@ class GamesView(ui.View):
         embed.add_field(name="Фильтры",     value=", ".join(self.filters) or "все", inline=True)
         embed.add_field(name="Участники",   value=", ".join(u.display_name for u in self.users), inline=False)
 
-        # Первый отклик или обновление
-        if self.message is None:
-            await interaction.response.send_message(embed=embed, view=self)
-            # сохраняем отправленное сообщение для последующего редактирования
-            self.message = await interaction.original_response()
-        else:
-            await self.message.edit(embed=embed, view=self)
+        # 8) Первый followup или редактирование
+        try:
+            if self.message is None:
+                self.message = await interaction.followup.send(embed=embed, view=self)
+            else:
+                await self.message.edit(embed=embed, view=self)
+        except (discord.errors.NotFound, discord.errors.HTTPException):
+            # Если вдруг сообщение потерялося, сбрасываем и пробуем заново
+            self.message = await interaction.followup.send(embed=embed, view=self)
 
-    @ui.button(custom_id='add_user', style=discord.ButtonStyle.secondary, emoji='➕')
-    async def on_add_user(self, button: ui.Button, interaction: discord.Interaction):
+    @ui.button(custom_id='add_user',    style=discord.ButtonStyle.secondary, emoji='➕')
+    async def on_add_user(self, button, interaction):
         options = [
             ui.SelectOption(label=m.display_name, value=str(m.id))
             for m in interaction.guild.members
@@ -258,37 +258,35 @@ class GamesView(ui.View):
         ]
         select = ui.Select(placeholder="Кого добавить?", options=options, custom_id='sel_add')
 
-        async def sel_add_cb(sel: ui.Select, sel_int: discord.Interaction):
-            uid = int(sel.values[0])
-            member = interaction.guild.get_member(uid)
+        async def sel_add_cb(sel, sel_int):
+            member = interaction.guild.get_member(int(sel.values[0]))
             if member:
                 self.users.append(member)
             await self.render(sel_int)
 
         select.callback = sel_add_cb
-        view = ui.View()
-        view.add_item(select)
-        await interaction.response.send_message("Выберите участника для добавления:", view=view, ephemeral=True)
+        temp = ui.View()
+        temp.add_item(select)
+        await interaction.response.send_message("Выберите участника для добавления:", view=temp, ephemeral=True)
 
     @ui.button(custom_id='remove_user', style=discord.ButtonStyle.secondary, emoji='➖')
-    async def on_remove_user(self, button: ui.Button, interaction: discord.Interaction):
+    async def on_remove_user(self, button, interaction):
         if len(self.users) <= 1:
             return await interaction.response.send_message("Нельзя убрать — останется 0 участников!", ephemeral=True)
         options = [ui.SelectOption(label=u.display_name, value=str(u.id)) for u in self.users]
         select = ui.Select(placeholder="Кого убрать?", options=options, custom_id='sel_rem')
 
-        async def sel_rem_cb(sel: ui.Select, sel_int: discord.Interaction):
-            uid = int(sel.values[0])
-            self.users = [u for u in self.users if u.id != uid]
+        async def sel_rem_cb(sel, sel_int):
+            self.users = [u for u in self.users if u.id != int(sel.values[0])]
             await self.render(sel_int)
 
         select.callback = sel_rem_cb
-        view = ui.View()
-        view.add_item(select)
-        await interaction.response.send_message("Выберите участника для удаления:", view=view, ephemeral=True)
+        temp = ui.View()
+        temp.add_item(select)
+        await interaction.response.send_message("Выберите участника для удаления:", view=temp, ephemeral=True)
 
-    @ui.button(custom_id='choose_sort', style=discord.ButtonStyle.secondary, emoji='📝')
-    async def on_choose_sort(self, button: ui.Button, interaction: discord.Interaction):
+    @ui.button(custom_id='choose_sort',   style=discord.ButtonStyle.secondary, emoji='📝')
+    async def on_choose_sort(self, button, interaction):
         opts = [
             ui.SelectOption(label="По алфавиту",    value="alphabet"),
             ui.SelectOption(label="По вашим часам", value="you"),
@@ -296,43 +294,39 @@ class GamesView(ui.View):
         ]
         select = ui.Select(placeholder="Сортировка", options=opts, custom_id='sel_sort')
 
-        async def sel_sort_cb(sel: ui.Select, sel_int: discord.Interaction):
+        async def sel_sort_cb(sel, sel_int):
             self.sort_key = sel.values[0]
             await self.render(sel_int)
 
         select.callback = sel_sort_cb
-        view = ui.View()
-        view.add_item(select)
-        await interaction.response.send_message("Выберите сортировку:", view=view, ephemeral=True)
+        temp = ui.View()
+        temp.add_item(select)
+        await interaction.response.send_message("Выберите сортировку:", view=temp, ephemeral=True)
 
     @ui.button(custom_id='choose_filters', style=discord.ButtonStyle.secondary, emoji='⚙️')
-    async def on_choose_filters(self, button: ui.Button, interaction: discord.Interaction):
+    async def on_choose_filters(self, button, interaction):
         opts = [
             ui.SelectOption(label="Co-op",    value="coop"),
             ui.SelectOption(label="Survival", value="survival"),
             ui.SelectOption(label="Horror",   value="horror"),
         ]
-        select = ui.Select(
-            placeholder="Фильтры",
-            options=opts,
-            custom_id='sel_filt',
-            min_values=0,
-            max_values=len(opts)
-        )
+        select = ui.Select(placeholder="Фильтры", options=opts, custom_id='sel_filt',
+                           min_values=0, max_values=len(opts))
 
-        async def sel_filt_cb(sel: ui.Select, sel_int: discord.Interaction):
+        async def sel_filt_cb(sel, sel_int):
             self.filters = set(sel.values)
             await self.render(sel_int)
 
         select.callback = sel_filt_cb
-        view = ui.View()
-        view.add_item(select)
-        await interaction.response.send_message("Установите фильтры:", view=view, ephemeral=True)
+        temp = ui.View()
+        temp.add_item(select)
+        await interaction.response.send_message("Установите фильтры:", view=temp, ephemeral=True)
 
     @ui.button(custom_id='close', style=discord.ButtonStyle.secondary, emoji='❌')
-    async def on_close(self, button: ui.Button, interaction: discord.Interaction):
+    async def on_close(self, button, interaction):
         await interaction.response.edit_message(content="Закрыто", embed=None, view=None)
         self.stop()
+
 
 
 
