@@ -175,10 +175,15 @@ async def link_steam(interaction, steam_url: str):
         return await safe_respond(interaction, content='❌ Некорректная ссылка.', ephemeral=True)
     sh = init_gspread_client()
     pws = sh.worksheet('Profiles')
-    idx, row = get_profile_row(pws, interaction.user.id)
-    if idx and row[2] and not SKIP_BIND_TTL:
+    if idx and row[2]:
         last = datetime.fromisoformat(row[2])
-        if datetime.utcnow() - last < timedelta(hours=BIND_TTL_HOURS):
+        # только если прошло меньше BIND_TTL_HOURS и не пропущен TTL
+        if datetime.utcnow() - last < timedelta(hours=BIND_TTL_HOURS) and not SKIP_BIND_TTL:
+            sh.worksheet('Blocked').append_row([str(interaction.user.id), 'Частая привязка'])
+            return await interaction.response.send_message(
+                f'❌ Попробуйте снова через {BIND_TTL_HOURS}ч.',
+                ephemeral=True
+            )
             return await safe_respond(interaction, content=f'⏳ Попробуйте через {BIND_TTL_HOURS}ч.', ephemeral=True)
     try: requests.get(steam_url, timeout=5).raise_for_status()
     except: return await safe_respond(interaction, content='❌ Профиль недоступен.', ephemeral=True)
@@ -186,8 +191,14 @@ async def link_steam(interaction, steam_url: str):
     sid = ident if ident.isdigit() else resolve_steamid(ident)
     if not sid: return await safe_respond(interaction, content='❌ Не удалось получить SteamID.', ephemeral=True)
     now_iso = datetime.utcnow().isoformat()
-    if idx: pws.update(f'B{idx}:C{idx}', [[steam_url, now_iso]])
-    else: pws.append_row([str(interaction.user.id), steam_url, now_iso])
+    if idx:
+        # обновляем сразу две колонки: steam_url и last_bound
+        pws.update(
+            range_name=f'B{idx}:C{idx}',
+            values=[[steam_url, now_iso]]
+        )
+    else:
+        pws.append_row([str(interaction.user.id), steam_url, now_iso])
     games = fetch_owned_games(sid)
     gws = sh.worksheet('Games')
     old = [r for r in gws.get_all_values()[1:] if r[0] != str(interaction.user.id)]
@@ -284,7 +295,8 @@ async def discount_game_check():
     ch = bot.get_channel(DISCOUNT_CHANNEL_ID)
     new = []
     for item in soup.select('.search_result_row')[:5]:
-        pct = item.select_one('.discount_pct').text.strip()
+        pct_elem = item.select_one('.search_discount > span')
+        pct = pct_elem.text.strip() if pct_elem else ''
         if pct != '-100%':
             continue
         title = item.select_one('.title').text.strip()
@@ -321,22 +333,25 @@ async def epic_free_check():
     ch = bot.get_channel(EPIC_CHANNEL_ID)
     new = []
     for game in offers:
-        promos = game.get('promotions') or {}
-        for key in ('upcomingPromotionalOffers', 'promotionalOffers'):
-            for entry in promos.get(key, []):
-                for o in entry.get('promotionalOffers', []):
-                    ts = o.get('endDate')
-                    try:
-                        et = datetime.fromtimestamp(float(ts)/1000)
-                    except:
-                        continue
-                    title = game.get('title')
-                    if any(x[0] == title for x in keep):
-                        continue
-                    if et > now:
-                        new.append([title, et.isoformat()])
-                        if ch:
-                            await ch.send(f'🎁 Бесплатно: {title} до {et.isoformat()}')
+        promo_list = []
+        for key in ('promotionalOffers','upcomingPromotionalOffers'):
+            blocks = game.get('promotions', {}).get(key) or []
+            for block in blocks:
+                promo_list += block.get('promotionalOffers', [])
+        for o in promo_list:
+            ts = o.get('endDate')
+            try:
+                # поддерживаем ISO и Unix-ms
+                et = datetime.fromisoformat(ts) if 'T' in ts else datetime.fromtimestamp(int(ts)/1000)
+            except:
+                continue
+            title = game.get('title')
+            if title in [x[0] for x in keep]:
+                continue
+            if et > now:
+                new.append([title, et.isoformat()])
+                if ch:
+                    await ch.send(f'🎁 Бесплатно: {title} до {et.isoformat()}')
     if new:
         ews.append_rows(new, value_input_option='USER_ENTERED')
 
