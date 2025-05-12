@@ -166,54 +166,65 @@ async def on_member_update(before, after):
 @bot.tree.command(name='привязать_steam')
 @app_commands.describe(steam_url='Ссылка на профиль Steam')
 async def link_steam(interaction: discord.Interaction, steam_url: str):
+    # 1) Уведомляем Discord, что ответим позже
+    await interaction.response.defer(ephemeral=True)
+
+    # 2) Проверяем Google Sheets
     sh = init_gspread_client()
     try:
         p_ws = sh.worksheet('Profiles')
         idx, row = get_profile_row(p_ws, interaction.user.id)
     except gspread.exceptions.APIError:
-        return await interaction.response.send_message(
+        return await interaction.followup.send(
             '❗ Google Sheets временно недоступен, попробуйте через минуту.',
             ephemeral=True
         )
 
-    # Теперь idx и row гарантированно определены
+    # 3) Уже привязан тот же URL?
     if idx and row[1] == steam_url:
-        return await interaction.response.send_message(
+        return await interaction.followup.send(
             'ℹ️ Вы уже привязали этот профиль.',
             ephemeral=True
         )
 
+    # 4) Проверка частой привязки
     if idx and row[2]:
         last = datetime.fromisoformat(row[2])
         if datetime.utcnow() - last < timedelta(hours=BIND_TTL_HOURS) and not SKIP_BIND_TTL:
             sh.worksheet('Blocked').append_row([str(interaction.user.id), 'Частая привязка'])
-            return await interaction.response.send_message(
-                f'❌ Попробуйте снова через {BIND_TTL_HOURS}ч.',
+            return await interaction.followup.send(
+                f'⏳ Попробуйте снова через {BIND_TTL_HOURS}ч.',
                 ephemeral=True
             )
-            return await safe_respond(interaction, content=f'⏳ Попробуйте через {BIND_TTL_HOURS}ч.', ephemeral=True)
-    try: requests.get(steam_url, timeout=5).raise_for_status()
-    except: return await safe_respond(interaction, content='❌ Профиль недоступен.', ephemeral=True)
-    ident = m.group(1)
-    sid = ident if ident.isdigit() else resolve_steamid(ident)
-    if not sid: return await safe_respond(interaction, content='❌ Не удалось получить SteamID.', ephemeral=True)
-    now_iso = datetime.utcnow().isoformat()
-    if idx:
-        # обновляем сразу две колонки: steam_url и last_bound
-        pws.update(
-            range_name=f'B{idx}:C{idx}',
-            values=[[steam_url, now_iso]]
-        )
-    else:
-        pws.append_row([str(interaction.user.id), steam_url, now_iso])
-    games = fetch_owned_games(sid)
-    gws = sh.worksheet('Games')
-    old = [r for r in gws.get_all_values()[1:] if r[0] != str(interaction.user.id)]
-    batch = [HEADERS['Games']] + old + [[str(interaction.user.id), name, str(hrs)] for name, hrs in games.items()]
-    gws.clear()
-    gws.append_rows(batch, value_input_option='USER_ENTERED')
-    await safe_respond(interaction, content='✅ Профиль привязан!', ephemeral=True)
 
+    # 5) Валидация ссылки
+    if not STEAM_URL_REGEX.match(steam_url):
+        return await interaction.followup.send(
+            '❌ Некорректная ссылка.',
+            ephemeral=True
+        )
+
+    # 6) Проверка доступности профиля
+    try:
+        r = requests.get(steam_url, timeout=10)
+        r.raise_for_status()
+    except:
+        return await interaction.followup.send(
+            '❌ Профиль недоступен.',
+            ephemeral=True
+        )
+
+    # 7) Извлекаем имя и предлагаем подтвердить
+    name_m = re.search(r'<title>(.*?) on Steam</title>', r.text)
+    profile_name = name_m.group(1) if name_m else 'Unknown'
+    view = ConfirmView(interaction.user.id, steam_url, profile_name, sh)
+
+    return await interaction.followup.send(
+        embed=Embed(description='Подтверждаете привязку профиля?'),
+        view=view,
+        ephemeral=True
+    )
+    
 @bot.tree.command(name='отвязать_steam')
 async def unlink_steam(interaction):
     sh = init_gspread_client()
