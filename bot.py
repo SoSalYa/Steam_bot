@@ -178,7 +178,7 @@ class GamesView(ui.View):
     def __init__(self, ctx_user: discord.Member, initial_users: List[discord.Member]):
         super().__init__(timeout=120)
         self.ctx_user = ctx_user
-        self.users = initial_users[:]             # список участников
+        self.users = initial_users[:]             # участники для сравнения
         self.sort_key = 'alphabet'                # 'alphabet', 'you', 'combined'
         self.sort_asc = True                      # True = asc, False = desc
         self.filters: set[str] = set()            # текстовые фильтры
@@ -187,30 +187,30 @@ class GamesView(ui.View):
 
     def update_buttons(self):
         self.clear_items()
-        # все кнопки без текста, только эмодзи, стиль secondary (белый/серый фон)
-        self.add_item(ui.Button(custom_id='add_user',    style=discord.ButtonStyle.secondary, emoji='➕'))
-        self.add_item(ui.Button(custom_id='remove_user', style=discord.ButtonStyle.secondary, emoji='✖️'))
-        self.add_item(ui.Button(custom_id='choose_sort', style=discord.ButtonStyle.secondary, emoji='📝'))
-        self.add_item(ui.Button(custom_id='choose_filters', style=discord.ButtonStyle.secondary, emoji='⚙️'))
-        self.add_item(ui.Button(custom_id='close',       style=discord.ButtonStyle.secondary, emoji='❌'))
+        # Эмодзи: ➕ и ➖ вместо ✖️
+        self.add_item(ui.Button(custom_id='add_user',      style=discord.ButtonStyle.secondary, emoji='➕'))
+        self.add_item(ui.Button(custom_id='remove_user',   style=discord.ButtonStyle.secondary, emoji='➖'))
+        self.add_item(ui.Button(custom_id='choose_sort',   style=discord.ButtonStyle.secondary, emoji='📝'))
+        self.add_item(ui.Button(custom_id='choose_filters',style=discord.ButtonStyle.secondary, emoji='⚙️'))
+        self.add_item(ui.Button(custom_id='close',         style=discord.ButtonStyle.secondary, emoji='❌'))
 
     async def render(self, interaction: discord.Interaction):
-        # 1) Собираем данные из Sheets
+        # Собираем данные
         records = init_gspread_client().worksheet('Games').get_all_records()
         data: dict[int, dict[str,int]] = {}
         for r in records:
             uid = int(r['discord_id'])
             data.setdefault(uid, {})[r['game_name']] = int(r['playtime'])
 
-        # 2) Находим общие игры
+        # Находим общие игры
         sets = [set(data.get(u.id, {})) for u in self.users]
         common = set.intersection(*sets) if sets else set()
 
-        # 3) Применяем текстовые фильтры
+        # Фильтруем
         if self.filters:
             common = {g for g in common if any(f.lower() in g.lower() for f in self.filters)}
 
-        # 4) Сортируем
+        # Сортируем
         if self.sort_key == 'alphabet':
             sorted_list = sorted(common, reverse=not self.sort_asc)
         elif self.sort_key == 'you':
@@ -223,7 +223,7 @@ class GamesView(ui.View):
                 reverse=not self.sort_asc
             )
 
-        # 5) Формируем текст
+        # Формируем текст
         lines = []
         for g in sorted_list:
             parts = [f"**{g}**"]
@@ -232,7 +232,7 @@ class GamesView(ui.View):
                 parts.append(f"{u.display_name}: {hrs}ч")
             lines.append(" — ".join(parts))
 
-        # 6) Собираем embed
+        # Создаём Embed
         embed = Embed(
             title=f"Общие игры ({len(sorted_list)})",
             description="\n".join(lines[:20]) or "Нет общих игр."
@@ -241,12 +241,12 @@ class GamesView(ui.View):
         embed.add_field(name="Фильтры",     value=", ".join(self.filters) or "все", inline=True)
         embed.add_field(name="Участники",   value=", ".join(u.display_name for u in self.users), inline=False)
 
-        # 7) Первый раз или обновление
-        if not self.message:
-            # первый отклик
-            self.message = await interaction.response.send_message(embed=embed, view=self)
+        # Первый отклик или обновление
+        if self.message is None:
+            await interaction.response.send_message(embed=embed, view=self)
+            # сохраняем отправленное сообщение для последующего редактирования
+            self.message = await interaction.original_response()
         else:
-            # редактируем ранее сохранённое сообщение
             await self.message.edit(embed=embed, view=self)
 
     @ui.button(custom_id='add_user', style=discord.ButtonStyle.secondary, emoji='➕')
@@ -268,12 +268,12 @@ class GamesView(ui.View):
         select.callback = sel_add_cb
         view = ui.View()
         view.add_item(select)
-        await interaction.response.send_message("Выберите участника:", view=view, ephemeral=True)
+        await interaction.response.send_message("Выберите участника для добавления:", view=view, ephemeral=True)
 
-    @ui.button(custom_id='remove_user', style=discord.ButtonStyle.secondary, emoji='✖️')
+    @ui.button(custom_id='remove_user', style=discord.ButtonStyle.secondary, emoji='➖')
     async def on_remove_user(self, button: ui.Button, interaction: discord.Interaction):
         if len(self.users) <= 1:
-            return await interaction.response.send_message("Остался только один участник.", ephemeral=True)
+            return await interaction.response.send_message("Нельзя убрать — останется 0 участников!", ephemeral=True)
         options = [ui.SelectOption(label=u.display_name, value=str(u.id)) for u in self.users]
         select = ui.Select(placeholder="Кого убрать?", options=options, custom_id='sel_rem')
 
@@ -285,14 +285,14 @@ class GamesView(ui.View):
         select.callback = sel_rem_cb
         view = ui.View()
         view.add_item(select)
-        await interaction.response.send_message("Выберите для удаления:", view=view, ephemeral=True)
+        await interaction.response.send_message("Выберите участника для удаления:", view=view, ephemeral=True)
 
     @ui.button(custom_id='choose_sort', style=discord.ButtonStyle.secondary, emoji='📝')
     async def on_choose_sort(self, button: ui.Button, interaction: discord.Interaction):
         opts = [
-            ui.SelectOption(label="По алфавиту",       value="alphabet"),
-            ui.SelectOption(label="По вашим часам",    value="you"),
-            ui.SelectOption(label="По сумме часов",    value="combined"),
+            ui.SelectOption(label="По алфавиту",    value="alphabet"),
+            ui.SelectOption(label="По вашим часам", value="you"),
+            ui.SelectOption(label="По сумме часов", value="combined"),
         ]
         select = ui.Select(placeholder="Сортировка", options=opts, custom_id='sel_sort')
 
@@ -333,6 +333,7 @@ class GamesView(ui.View):
     async def on_close(self, button: ui.Button, interaction: discord.Interaction):
         await interaction.response.edit_message(content="Закрыто", embed=None, view=None)
         self.stop()
+
 
 
 
