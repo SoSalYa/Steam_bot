@@ -227,7 +227,6 @@ class GamesView(ui.View):
             uid = int(sel.values[0])
             member = interaction.guild.get_member(uid)
             if member: self.users.append(member)
-            await sel_int.response.edit_message(view=self)
             await self.render(sel_int)
 
         select.callback = sel_add_cb
@@ -245,7 +244,6 @@ class GamesView(ui.View):
         async def sel_rem_cb(sel, sel_int):
             uid = int(sel.values[0])
             self.users = [u for u in self.users if u.id != uid]
-            await sel_int.response.edit_message(view=self)
             await self.render(sel_int)
 
         select.callback = sel_rem_cb
@@ -264,7 +262,6 @@ class GamesView(ui.View):
 
         async def sel_sort_cb(sel, sel_int):
             self.sort_key = sel.values[0]
-            await sel_int.response.edit_message(view=self)
             await self.render(sel_int)
 
         select.callback = sel_sort_cb
@@ -283,7 +280,6 @@ class GamesView(ui.View):
 
         async def sel_filt_cb(sel, sel_int):
             self.filters = set(sel.values)
-            await sel_int.response.edit_message(view=self)
             await self.render(sel_int)
 
         select.callback = sel_filt_cb
