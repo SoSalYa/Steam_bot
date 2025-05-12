@@ -188,34 +188,32 @@ class GamesView(ui.View):
     def _build_buttons(self):
         self.clear_items()
 
-        # ➕ Добавить пользователя
         btn_add = ui.Button(custom_id='add_user', style=discord.ButtonStyle.secondary, emoji='➕')
         btn_add.callback = self.on_add_user
         self.add_item(btn_add)
 
-        # ➖ Убрать пользователя
         btn_rem = ui.Button(custom_id='remove_user', style=discord.ButtonStyle.secondary, emoji='➖')
         btn_rem.callback = self.on_remove_user
         self.add_item(btn_rem)
 
-        # 📝 Сортировка
         btn_sort = ui.Button(custom_id='choose_sort', style=discord.ButtonStyle.secondary, emoji='📝')
         btn_sort.callback = self.on_choose_sort
         self.add_item(btn_sort)
 
-        # ⚙️ Фильтры
         btn_filt = ui.Button(custom_id='choose_filters', style=discord.ButtonStyle.secondary, emoji='⚙️')
         btn_filt.callback = self.on_choose_filters
         self.add_item(btn_filt)
 
-        # ❌ Закрыть
         btn_close = ui.Button(custom_id='close', style=discord.ButtonStyle.secondary, emoji='❌')
         btn_close.callback = self.on_close
         self.add_item(btn_close)
 
     async def render(self, interaction: discord.Interaction):
-        if not interaction.response.is_done():
+        # Аcknowledge interaction if not already
+        try:
             await interaction.response.defer()
+        except (discord.errors.InteractionResponded, discord.errors.NotFound):
+            pass
 
         # 2) Читаем и готовим данные
         records = init_gspread_client().worksheet('Games').get_all_records()
@@ -268,7 +266,6 @@ class GamesView(ui.View):
             else:
                 await self.message.edit(embed=embed, view=self)
         except (discord.errors.NotFound, discord.errors.HTTPException):
-            # Если вдруг сообщение потерялось, пробуем заново
             self.message = await interaction.followup.send(embed=embed, view=self)
 
     async def on_add_user(self, interaction: discord.Interaction):
