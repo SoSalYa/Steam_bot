@@ -262,38 +262,28 @@ class GamesView(View):
         await self.render_page(interaction)
 
     async def render(self, interaction: discord.Interaction):
-        # --- 1) Собираем или обновляем страницы и готовим embed ---
         data = self._fetch_games_data()
         if self._needs_rebuild():
             self._build_pages(data)
             self.page_idx = 0
 
-        # Гарантируем, что index валиден
         self.page_idx = max(0, min(self.page_idx, len(self.pages) - 1))
         embed = self.pages[self.page_idx]
 
-        # --- 2) Первый вывод: send_message + сохранить message + реакции ---
         if self.message is None:
-            # Отправляем embed и View
-            await interaction.response.send_message(embed=embed, view=self)
-            # Получаем только что отправленное сообщение
-            self.message = await interaction.original_response()
-            # Добавляем реакции по необходимости
+            self.message = await interaction.followup.send(embed=embed, view=self)
             if self.page_idx > 0:
                 await self.message.add_reaction("⬅️")
             if self.page_idx < len(self.pages) - 1:
                 await self.message.add_reaction("➡️")
             return
 
-        # --- 3) Последующие ререндеры: только edit + коррекция реакций ---
         await self.message.edit(embed=embed, view=self)
 
-        # Проверяем текущее состояние реакций
         has_left = any(r.emoji == "⬅️" for r in self.message.reactions)
         has_right = any(r.emoji == "➡️" for r in self.message.reactions)
         bot_user = interaction.client.user
 
-        # Левая стрелка
         if self.page_idx == 0:
             if has_left:
                 await self.message.remove_reaction("⬅️", bot_user)
@@ -301,13 +291,13 @@ class GamesView(View):
             if not has_left:
                 await self.message.add_reaction("⬅️")
 
-        # Правая стрелка
         if self.page_idx == len(self.pages) - 1:
             if has_right:
                 await self.message.remove_reaction("➡️", bot_user)
         else:
             if not has_right:
                 await self.message.add_reaction("➡️")
+    
 
     async def update_reactions(self, interaction: discord.Interaction):
         """Добавляет/удаляет реакции стрелок для навигации."""
