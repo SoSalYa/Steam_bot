@@ -260,22 +260,35 @@ class GamesView(View):
         # Отправляем или редактируем сообщение с новой страницей
         await self.render_page(interaction)
 
-    async def render_page(self, interaction: discord.Interaction):
-        """Формирует embed для текущей страницы и обновляет сообщение."""
-        if not self.pages:
-            content = "Нет подходящих игр."
-        else:
-            page_games = self.pages[self.current_page]
-            content = "\n".join(f"- {g.get('name')}" for g in page_games)
-        embed = discord.Embed(title="Результаты сравнения игр", description=content)
-        embed.set_footer(text=f"Страница {self.current_page+1}/{len(self.pages)}")
-        # Если это первая отправка, используем send; иначе edit
-        if interaction.response.is_done():
-            await interaction.followup.edit_message(interaction.message.id, embed=embed, view=self)
-        else:
-            await interaction.response.edit_message(embed=embed, view=self)
-        # Обновляем реакции для пагинации
-        await self.update_reactions(interaction)
+    async def render(self, interaction: discord.Interaction):
+    # 1) При первом вызове — отправляем раз и навсегда
+    if self.message is None:
+        # первый ответ
+        await interaction.response.send_message(embed=embed, view=self)
+        self.message = await interaction.original_response()
+        # выставляем реакции один раз
+        if self.page_idx > 0:
+            await self.message.add_reaction("⬅️")
+        if self.page_idx < len(self.pages) - 1:
+            await self.message.add_reaction("➡️")
+        return
+
+    # 2) Дальнейшие — только edit + при необходимости коррекция реакций
+    await self.message.edit(embed=embed, view=self)
+
+    # 3) Корректируем реакции ТОЛЬКО если номер страницы перескочил край
+    has_left = any(r.emoji == "⬅️" for r in self.message.reactions)
+    has_right = any(r.emoji == "➡️" for r in self.message.reactions)
+
+    if self.page_idx == 0 and has_left:
+        await self.message.remove_reaction("⬅️", self.bot.user)
+    elif self.page_idx > 0 and not has_left:
+        await self.message.add_reaction("⬅️")
+
+    if self.page_idx == len(self.pages)-1 and has_right:
+        await self.message.remove_reaction("➡️", self.bot.user)
+    elif self.page_idx < len(self.pages)-1 and not has_right:
+        await self.message.add_reaction("➡️")
 
     async def update_reactions(self, interaction: discord.Interaction):
         """Добавляет/удаляет реакции стрелок для навигации."""
