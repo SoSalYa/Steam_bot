@@ -33,13 +33,15 @@ PORT = int(os.getenv('PORT', '5000'))
 SKIP_BIND_TTL = os.getenv('SKIP_BIND_TTL', 'false').lower() in ['1','true','yes']
 BIND_TTL_HOURS = int(os.getenv('BIND_TTL_HOURS', '24'))
 CACHE_TTL = timedelta(minutes=30)
-bot = commands.Bot(command_prefix=PREFIX, intents=INTENTS)
 
 # === Intents ===
 INTENTS = discord.Intents.default()
 INTENTS.members = True
 INTENTS.presences = True
 INTENTS.message_content = True
+
+# === Bot Setup ===
+bot = commands.Bot(command_prefix=PREFIX, intents=INTENTS)
 
 # === Flask Keep-Alive ===
 app = Flask(__name__)
@@ -416,7 +418,7 @@ async def on_reaction_remove(reaction: Reaction, user: Member):
 
 
 
-# === Bot Setup ===
+
 
 @bot.event
 async def on_ready():
