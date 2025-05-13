@@ -262,6 +262,14 @@ class GamesView(View):
         await self.render_page(interaction)
 
     async def render(self, interaction: discord.Interaction):
+        # Отправляем мгновенный плейсхолдер
+        await interaction.response.send_message("🔄 Загружаю общие игры…", view=self)
+        self.message = await interaction.original_response()
+        # Запускаем фон
+        asyncio.create_task(self.refresh())
+
+    async def refresh(self):
+        # Вся ваша существующая логика сборки data, build_pages и пагинации:
         data = self._fetch_games_data()
         if self._needs_rebuild():
             self._build_pages(data)
@@ -270,36 +278,23 @@ class GamesView(View):
         self.page_idx = max(0, min(self.page_idx, len(self.pages) - 1))
         embed = self.pages[self.page_idx]
 
-        # Первый раз — response.send_message
-        if self.message is None:
-            await interaction.response.send_message(embed=embed, view=self)
-            self.message = await interaction.original_response()
-            if self.page_idx > 0:
-                await self.message.add_reaction("⬅️")
-            if self.page_idx < len(self.pages) - 1:
-                await self.message.add_reaction("➡️")
-            return
-
-        # Далее — только edit
+        # Редактируем сообщение одним запросом
         await self.message.edit(embed=embed, view=self)
 
+        # Управление реакциями (влево/вправо) — как было:
         has_left = any(r.emoji == "⬅️" for r in self.message.reactions)
         has_right = any(r.emoji == "➡️" for r in self.message.reactions)
-        me = interaction.client.user
+        me = self.message.author  # либо interaction.client.user, но message.author тоже бот
 
-        if self.page_idx == 0:
-            if has_left:
-                await self.message.remove_reaction("⬅️", me)
-        else:
-            if not has_left:
-                await self.message.add_reaction("⬅️")
+        if self.page_idx > 0 and not has_left:
+            await self.message.add_reaction("⬅️")
+        if self.page_idx == 0 and has_left:
+            await self.message.remove_reaction("⬅️", me)
 
-        if self.page_idx == len(self.pages) - 1:
-            if has_right:
-                await self.message.remove_reaction("➡️", me)
-        else:
-            if not has_right:
-                await self.message.add_reaction("➡️")
+        if self.page_idx < len(self.pages) - 1 and not has_right:
+            await self.message.add_reaction("➡️")
+        if self.page_idx == len(self.pages) - 1 and has_right:
+            await self.message.remove_reaction("➡️", me)
     
 
     async def update_reactions(self, interaction: discord.Interaction):
@@ -535,13 +530,7 @@ async def find_teammates(interaction, игра: str):
 @bot.tree.command(name='общие_игры')
 async def common_games(interaction: discord.Interaction, user: discord.Member):
     view = GamesView(interaction.user, [interaction.user, user])
-    # сразу рендерим — без defer()
-    try:
-        await view.render(interaction)
-    except Exception as e:
-        print("Ошибка в common_games:", e)
-        # если что-то упало, шлём простой ответ
-        await interaction.response.send_message("Произошла ошибка при выполнении команды.", ephemeral=True)
+    await view.render(interaction)  # сразу вызов плейсхолдера + фон
 
 
 @tasks.loop(time=time(0,10))
