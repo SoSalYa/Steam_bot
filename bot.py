@@ -539,7 +539,15 @@ async def find_teammates(interaction, игра: str):
     mentions = [f"{interaction.guild.get_member(int(uid)).mention} ({hrs}ч)" for uid, hrs in sorted(matches, key=lambda x: x[1], reverse=True) if interaction.guild.get_member(int(uid))]
     await interaction.followup.send(', '.join(mentions), ephemeral=True)
 
-
+@bot.tree.command(name='общие_игры')
+async def common_games(interaction: discord.Interaction, user: discord.Member):
+    await interaction.response.defer()  # один раз!
+    view = GamesView(interaction.user, [interaction.user, user])
+    try:
+        await view.render(interaction)
+    except Exception as e:
+        print("Ошибка при рендере:", e)
+        await interaction.followup.send("Произошла ошибка при отображении списка игр.")
 
 
 @tasks.loop(time=time(0,10))
