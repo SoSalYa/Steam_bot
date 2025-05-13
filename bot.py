@@ -227,165 +227,233 @@ def get_sheet_data():
         _sheets_cache["timestamp"] = now
     return _sheets_cache["data"]
 
-class GamesView(View):
-    def __init__(self):
-        super().__init__(timeout=None)
-        self.participants = []        # список участников (напр. Steam ID или имя)
-        self.selected_tags = {"Co-op"}  # по умолчанию фильтр "Co-op"
-        self.sort_ascending = True    # направление сортировки
-        self.games = []               # текущий список игр после фильтрации
-        self.pages = []
-        self.current_page = 0
+STEAM_TAGS = [
+    "Co-op", "Remote Play Together", "Multiplayer", "Singleplayer",
+    "Adventure", "Action", "RPG", "Strategy",
+    "Horror", "Survival", "Puzzle", "Simulation",
+    "Sports", "Racing", "Platformer", "Shooter",
+]
 
-    async def update_pages(self, interaction: discord.Interaction):
-        """Пересчёт списка игр, фильтрация, сортировка и генерация страниц."""
-        # Получаем свежие данные (например, общие игры участников)
-        sheet_data = get_sheet_data()
-        # TODO: здесь должна быть логика объединения/фильтрации данных участников по sheet_data
-        # Предположим, что из sheet_data мы получаем список (названий или id) игр, общих для участников.
-        games_list = []  # TODO: заменить на реальный список игр
-        # Фильтруем по выбранным тегам Steam
-        filtered = []
-        for game in games_list:
-            app_id = game.get("appid")  # предполагаем, что в game хранится 'appid'
-            tags = get_game_tags(app_id)
-            if self.selected_tags.issubset(tags):
-                filtered.append(game)
-        # Сортируем по имени игры (или любому другому критерию)
-        filtered.sort(key=lambda g: g.get("name", ""), reverse=not self.sort_ascending)
-        self.games = filtered
-        # Разбиваем на страницы (по 10 игр на страницу)
+class GamesView(ui.View):
+    def __init__(self, ctx_user: discord.Member, initial_users: list[discord.Member]):
+        super().__init__(timeout=120)
+        self.ctx_user = ctx_user
+        self.users = initial_users[:6]   # не более шести участников
+        self.sort_key = 'alphabet'
+        self.sort_asc = True
+        self.filters: set[str] = {'co_op'}  # Co-op по умолчанию
+
+        self.pages: list[Embed] = []
+        self.page_idx = 0
+        self.message: discord.Message | None = None
+
+        # создаём кнопки один раз
+        for cid, emoji, cb in [
+            ('add_user',       '➕', self.on_add_user),
+            ('remove_user',    '➖', self.on_remove_user),
+            ('choose_sort',    '📝', self.on_choose_sort),
+            ('choose_filters', '⚙️', self.on_choose_filters),
+            ('close',          '❌', self.on_close),
+        ]:
+            btn = ui.Button(custom_id=cid, style=discord.ButtonStyle.secondary, emoji=emoji)
+            btn.callback = cb
+            self.add_item(btn)
+
+    def _fetch_games_data(self) -> dict[int, dict]:
+        # кэшируем чтение Games на CACHE_TTL
+        from datetime import datetime
+        now = datetime.utcnow()
+        if GAMES_CACHE.is_fresh(CACHE_TTL):
+            return GAMES_CACHE.data
+        records = init_gspread_client().worksheet('Games').get_all_records()
+        data: dict[int, dict] = {}
+        for r in records:
+            uid = int(r['discord_id'])
+            appid = int(r.get('appid', 0))  # добавьте appid в лист Games
+            data.setdefault(uid, {})[appid] = {
+                'name': r['game_name'],
+                'hrs': int(r['playtime'])
+            }
+        GAMES_CACHE.update(data)
+        return data
+
+    def _needs_rebuild(self) -> bool:
+        state = (
+            tuple(u.id for u in self.users),
+            tuple(sorted(self.filters)),
+            self.sort_key, self.sort_asc
+        )
+        if state != getattr(self, '_last_state', None):
+            self._last_state = state
+            return True
+        return False
+
+    def _build_pages(self, data: dict[int, dict]):
+        sets = [set(data.get(u.id, {}).keys()) for u in self.users]
+        common = set.intersection(*sets) if sets else set()
+
+        if self.filters:
+            filtered = set()
+            for appid in common:
+                tags = fetch_game_tags(appid)
+                for f in self.filters:
+                    if f.replace('_', ' ') in tags:
+                        filtered.add(appid)
+                        break
+            common = filtered
+
+        if self.sort_key == 'alphabet':
+            sorted_list = sorted(common,
+                                 key=lambda a: data[self.ctx_user.id][a]['name'].lower(),
+                                 reverse=not self.sort_asc)
+        elif self.sort_key == 'you':
+            mymap = data.get(self.ctx_user.id, {})
+            sorted_list = sorted(common,
+                                 key=lambda a: mymap.get(a, {}).get('hrs', 0),
+                                 reverse=not self.sort_asc)
+        else:  # combined
+            sorted_list = sorted(common,
+                                 key=lambda a: sum(data[u.id].get(a, {}).get('hrs', 0)
+                                                   for u in self.users),
+                                 reverse=not self.sort_asc)
+
+        self.pages.clear()
         per_page = 10
-        self.pages = [self.games[i:i+per_page] for i in range(0, len(self.games), per_page)]
-        self.current_page = 0
-        # Отправляем или редактируем сообщение с новой страницей
-        await self.render_page(interaction)
+        total = len(sorted_list)
+        for i in range(0, total, per_page):
+            chunk = sorted_list[i:i+per_page]
+            lines = []
+            for appid in chunk:
+                name = data[self.ctx_user.id][appid]['name']
+                parts = [f"**{name}**"]
+                for u in self.users:
+                    hrs = data.get(u.id, {}).get(appid, {}).get('hrs', 0)
+                    parts.append(f"{u.display_name}: {hrs}ч")
+                lines.append(" — ".join(parts))
+            emb = Embed(title=f"Общие игры ({total})",
+                        description="\n".join(lines) or "Нет общих игр.")
+            emb.add_field(name="Сортировка",
+                          value=f"{self.sort_key}{' ▲' if self.sort_asc else ' ▼'}",
+                          inline=True)
+            emb.add_field(name="Фильтры",
+                          value=", ".join(self.filters) or "все",
+                          inline=True)
+            emb.add_field(name="Участники",
+                          value=", ".join(u.display_name for u in self.users),
+                          inline=False)
+            emb.set_footer(text=f"Стр. {len(self.pages)+1}/{(total-1)//per_page+1}")
+            self.pages.append(emb)
 
     async def render(self, interaction: discord.Interaction):
-        # Отправляем мгновенный плейсхолдер
         await interaction.response.send_message("🔄 Загружаю общие игры…", view=self)
         self.message = await interaction.original_response()
-        # Запускаем фон
         asyncio.create_task(self.refresh())
 
     async def refresh(self):
-        # Вся ваша существующая логика сборки data, build_pages и пагинации:
         data = self._fetch_games_data()
         if self._needs_rebuild():
             self._build_pages(data)
             self.page_idx = 0
 
-        self.page_idx = max(0, min(self.page_idx, len(self.pages) - 1))
+        self.page_idx = max(0, min(self.page_idx, len(self.pages)-1))
         embed = self.pages[self.page_idx]
-
-        # Редактируем сообщение одним запросом
         await self.message.edit(embed=embed, view=self)
 
-        # Управление реакциями (влево/вправо) — как было:
         has_left = any(r.emoji == "⬅️" for r in self.message.reactions)
         has_right = any(r.emoji == "➡️" for r in self.message.reactions)
-        me = self.message.author  # либо interaction.client.user, но message.author тоже бот
+        me = self.message.author
 
         if self.page_idx > 0 and not has_left:
             await self.message.add_reaction("⬅️")
         if self.page_idx == 0 and has_left:
             await self.message.remove_reaction("⬅️", me)
 
-        if self.page_idx < len(self.pages) - 1 and not has_right:
+        if self.page_idx < len(self.pages)-1 and not has_right:
             await self.message.add_reaction("➡️")
-        if self.page_idx == len(self.pages) - 1 and has_right:
+        if self.page_idx == len(self.pages)-1 and has_right:
             await self.message.remove_reaction("➡️", me)
+
+    async def on_add_user(self, interaction: discord.Interaction):
+        options = [
+            SelectOption(label=m.display_name, value=str(m.id))
+            for m in interaction.guild.members
+            if not m.bot and m not in self.users
+        ][:25]
+        if not options:
+            return await interaction.response.send_message("Больше участников нельзя.", ephemeral=True)
+
+        select = ui.Select(placeholder="Кого добавить?", options=options)
+        async def cb(sel: ui.Select, inter: discord.Interaction):
+            member = interaction.guild.get_member(int(sel.values[0]))
+            if member and len(self.users) < 6:
+                self.users.append(member)
+            await inter.response.defer()
+            await self.refresh()
+        select.callback = cb
+        view = ui.View()
+        view.add_item(select)
+        await interaction.response.send_message("Выберите участника:", view=view, ephemeral=True)
+
+    async def on_remove_user(self, interaction: discord.Interaction):
+        options = [SelectOption(label=u.display_name, value=str(u.id)) for u in self.users][:25]
+        if not options:
+            return await interaction.response.send_message("Нет участников для удаления.", ephemeral=True)
+
+        select = ui.Select(placeholder="Кого убрать?", options=options)
+        async def cb(sel: ui.Select, inter: discord.Interaction):
+            self.users = [u for u in self.users if u.id != int(sel.values[0])]
+            await inter.response.defer()
+            await self.refresh()
+        select.callback = cb
+        view = ui.View()
+        view.add_item(select)
+        await interaction.response.send_message("Выберите участника:", view=view, ephemeral=True)
+
+    async def on_choose_sort(self, interaction: discord.Interaction):
+        opts = [
+            SelectOption(label="По алфавиту",    value="alphabet", default=(self.sort_key=='alphabet')),
+            SelectOption(label="По вашим часам", value="you",       default=(self.sort_key=='you')),
+            SelectOption(label="По сумме часов", value="combined",  default=(self.sort_key=='combined')),
+        ]
+        select = ui.Select(placeholder="Сортировка", options=opts)
+        async def cb(sel: ui.Select, inter: discord.Interaction):
+            self.sort_key = sel.values[0]
+            await inter.response.defer()
+            await self.refresh()
+        select.callback = cb
+        view = ui.View()
+        view.add_item(select)
+        await interaction.response.send_message("Выберите сортировку:", view=view, ephemeral=True)
+
+    async def on_choose_filters(self, interaction: discord.Interaction):
+        opts = []
+        for tag in STEAM_TAGS:
+            key = tag.lower().replace(" ", "_")
+            opts.append(SelectOption(
+                label=tag,
+                value=key,
+                default=(key in self.filters)
+            ))
+        select = ui.Select(placeholder="Фильтры", options=opts, min_values=0, max_values=len(opts))
+        async def cb(sel: ui.Select, inter: discord.Interaction):
+            self.filters = set(sel.values)
+            await inter.response.defer()
+            await self.refresh()
+        select.callback = cb
+        view = ui.View()
+        view.add_item(select)
+        await interaction.response.send_message("Выберите фильтры:", view=view, ephemeral=True)
+
+    async def on_close(self, interaction: discord.Interaction):
+        await self.message.clear_reactions()
+        self.clear_items()
+        await self.message.edit(content="Закрыто", embed=None, view=None)
     
 
-    async def update_reactions(self, interaction: discord.Interaction):
-        """Добавляет/удаляет реакции стрелок для навигации."""
-        message = interaction.message if interaction.message else await interaction.original_response()
-        # Сначала очищаем все реакции
-        try:
-            await message.clear_reactions()
-        except Exception:
-            pass
-        # Добавляем стрелки по необходимости
-        if self.pages and self.current_page > 0:
-            await message.add_reaction("⬅️")
-        if self.pages and self.current_page < len(self.pages) - 1:
-            await message.add_reaction("➡️")
-
-    @button(emoji="➕", style=ButtonStyle.primary)
-    async def add_participant(self, button: discord.ui.Button, interaction: discord.Interaction):
-        # Логика добавления участника (например, через mention или ID)
-        if len(self.participants) >= 6:
-            await interaction.response.send_message("Нельзя добавить больше 6 участников.", ephemeral=True)
-            return
-        # TODO: запросить пользователя для добавления (например, модальное окно или selection)
-        # placeholder: просто добавим фиктивного участника
-        new_user = "Игрок" + str(len(self.participants)+1)
-        self.participants.append(new_user)
-        await interaction.response.send_message(f"Участник {new_user} добавлен.", ephemeral=True)
-        await self.update_pages(interaction)
-
-    @button(emoji="➖", style=ButtonStyle.danger)
-    async def remove_participant(self, button: discord.ui.Button, interaction: discord.Interaction):
-        # Логика удаления участника (например, выбор из списка)
-        if not self.participants:
-            await interaction.response.send_message("Нет участников для удаления.", ephemeral=True)
-            return
-        # TODO: запросить, кого удалить; placeholder - удалим последнего
-        removed = self.participants.pop()
-        await interaction.response.send_message(f"Участник {removed} удалён.", ephemeral=True)
-        await self.update_pages(interaction)
-
-    @button(emoji="⚙️", style=ButtonStyle.secondary)
-    async def filter_menu(self, button: discord.ui.Button, interaction: discord.Interaction):
-        # Показываем селект-меню для выбора тегов-фильтров
-        # Список опций формируем из уникальных тегов всех игр (или из заранее известных)
-        all_tags = {"Co-op", "Single-player", "Multiplayer", "Adventure", "RPG"}  # пример
-        options = []
-        for tag in sorted(all_tags):
-            default = (tag == "Co-op")
-            options.append(SelectOption(label=tag, value=tag, default=default))
-        select = discord.ui.Select(placeholder="Выберите теги фильтрации",
-                                   min_values=1, max_values=len(options), options=options)
-        async def select_callback(select_interaction: discord.Interaction):
-            self.selected_tags = set(select.values)
-            await select_interaction.response.defer()
-            await self.update_pages(select_interaction)
-        select.callback = select_callback
-        view = discord.ui.View()
-        view.add_item(select)
-        await interaction.response.send_message("Выберите теги для фильтрации:", view=view, ephemeral=True)
-
-    @button(emoji="📝", style=ButtonStyle.secondary)
-    async def sort_toggle(self, button: discord.ui.Button, interaction: discord.Interaction):
-        # Переключаем сортировку по названию (прямой/обратный) и обновляем
-        self.sort_ascending = not self.sort_ascending
-        order = "возрастанию" if self.sort_ascending else "убыванию"
-        await interaction.response.send_message(f"Сортировка по названию: {order}.", ephemeral=True)
-        await self.update_pages(interaction)
-
-    @button(emoji="❌", style=ButtonStyle.danger)
-    async def close(self, button: discord.ui.Button, interaction: discord.Interaction):
-        # Закрываем View: удаляем реакции и отключаем кнопки
-        message = interaction.message if interaction.message else await interaction.original_response()
-        try:
-            await message.clear_reactions()
-        except Exception:
-            pass
-        self.clear_items()  # отключаем все кнопки
-        await interaction.response.edit_message(content="Меню закрыто.", embed=None, view=None)
-
-# Пример использования: в команде или ивенте
-# view = GamesView()
-# await interaction.response.send_message("Сравнение игр:", view=view)
+    
     
         
     
-
-
-
-
-
-
 
 
 
