@@ -270,30 +270,33 @@ class GamesView(View):
         self.page_idx = max(0, min(self.page_idx, len(self.pages) - 1))
         embed = self.pages[self.page_idx]
 
+        # Первый раз: используем response.send_message
         if self.message is None:
-            self.message = await interaction.followup.send(embed=embed, view=self)
+            await interaction.response.send_message(embed=embed, view=self)
+            self.message = await interaction.original_response()
             if self.page_idx > 0:
                 await self.message.add_reaction("⬅️")
             if self.page_idx < len(self.pages) - 1:
                 await self.message.add_reaction("➡️")
             return
 
+        # Повторные: только edit + реакции
         await self.message.edit(embed=embed, view=self)
 
         has_left = any(r.emoji == "⬅️" for r in self.message.reactions)
         has_right = any(r.emoji == "➡️" for r in self.message.reactions)
-        bot_user = interaction.client.user
+        me = interaction.client.user
 
         if self.page_idx == 0:
             if has_left:
-                await self.message.remove_reaction("⬅️", bot_user)
+                await self.message.remove_reaction("⬅️", me)
         else:
             if not has_left:
                 await self.message.add_reaction("⬅️")
 
         if self.page_idx == len(self.pages) - 1:
             if has_right:
-                await self.message.remove_reaction("➡️", bot_user)
+                await self.message.remove_reaction("➡️", me)
         else:
             if not has_right:
                 await self.message.add_reaction("➡️")
