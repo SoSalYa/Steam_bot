@@ -270,7 +270,7 @@ class GamesView(View):
         self.page_idx = max(0, min(self.page_idx, len(self.pages) - 1))
         embed = self.pages[self.page_idx]
 
-        # Первый раз: используем response.send_message
+        # Первый раз — response.send_message
         if self.message is None:
             await interaction.response.send_message(embed=embed, view=self)
             self.message = await interaction.original_response()
@@ -280,7 +280,7 @@ class GamesView(View):
                 await self.message.add_reaction("➡️")
             return
 
-        # Повторные: только edit + реакции
+        # Далее — только edit
         await self.message.edit(embed=embed, view=self)
 
         has_left = any(r.emoji == "⬅️" for r in self.message.reactions)
@@ -534,13 +534,14 @@ async def find_teammates(interaction, игра: str):
 
 @bot.tree.command(name='общие_игры')
 async def common_games(interaction: discord.Interaction, user: discord.Member):
-    await interaction.response.defer()  # один раз!
     view = GamesView(interaction.user, [interaction.user, user])
+    # сразу рендерим — без defer()
     try:
         await view.render(interaction)
     except Exception as e:
-        print("Ошибка при рендере:", e)
-        await interaction.followup.send("Произошла ошибка при отображении списка игр.")
+        print("Ошибка в common_games:", e)
+        # если что-то упало, шлём простой ответ
+        await interaction.response.send_message("Произошла ошибка при выполнении команды.", ephemeral=True)
 
 
 @tasks.loop(time=time(0,10))
