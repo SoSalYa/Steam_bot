@@ -17,6 +17,22 @@ import psutil
 from flask import Flask, jsonify
 from threading import Thread
 
+# === Кэш данных по играм ===
+class _GamesDataCache:
+    def __init__(self):
+        self.timestamp = datetime.min
+        self.data: dict[int, dict] = {}
+
+    def is_fresh(self, ttl: timedelta) -> bool:
+        return datetime.utcnow() - self.timestamp < ttl
+
+    def update(self, new_data: dict[int, dict]):
+        self.data = new_data
+        self.timestamp = datetime.utcnow()
+
+# Инстанс глобального кэша
+GAMES_CACHE = _GamesDataCache()
+
 # Для пагинации
 PAGINATION_VIEWS: dict[int, "GamesView"] = {}
 
@@ -350,28 +366,33 @@ class GamesView(ui.View):
         asyncio.create_task(self.refresh())
 
     async def refresh(self):
-        data = self._fetch_games_data()
-        if self._needs_rebuild():
-            self._build_pages(data)
-            self.page_idx = 0
+        try:
+            data = self._fetch_games_data()
+            if self._needs_rebuild():
+                self._build_pages(data)
+                self.page_idx = 0
 
-        self.page_idx = max(0, min(self.page_idx, len(self.pages)-1))
-        embed = self.pages[self.page_idx]
-        await self.message.edit(embed=embed, view=self)
+            self.page_idx = max(0, min(self.page_idx, len(self.pages)-1))
+            embed = self.pages[self.page_idx]
+            await self.message.edit(embed=embed, view=self)
 
-        has_left = any(r.emoji == "⬅️" for r in self.message.reactions)
-        has_right = any(r.emoji == "➡️" for r in self.message.reactions)
-        me = self.message.author
+            has_left = any(r.emoji == "⬅️" for r in self.message.reactions)
+            has_right = any(r.emoji == "➡️" for r in self.message.reactions)
+            me = self.message.author
 
-        if self.page_idx > 0 and not has_left:
-            await self.message.add_reaction("⬅️")
-        if self.page_idx == 0 and has_left:
-            await self.message.remove_reaction("⬅️", me)
+            if self.page_idx > 0 and not has_left:
+                await self.message.add_reaction("⬅️")
+            if self.page_idx == 0 and has_left:
+                await self.message.remove_reaction("⬅️", me)
 
-        if self.page_idx < len(self.pages)-1 and not has_right:
-            await self.message.add_reaction("➡️")
-        if self.page_idx == len(self.pages)-1 and has_right:
-            await self.message.remove_reaction("➡️", me)
+            if self.page_idx < len(self.pages)-1 and not has_right:
+                await self.message.add_reaction("➡️")
+            if self.page_idx == len(self.pages)-1 and has_right:
+                await self.message.remove_reaction("➡️", me)
+
+        except Exception as e:
+            # Чтобы не быть “невостребованным таском”
+            print(f"[GamesView.refresh] ошибка: {e}")
 
     async def on_add_user(self, interaction: discord.Interaction):
         options = [
