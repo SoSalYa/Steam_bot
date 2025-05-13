@@ -1,6 +1,7 @@
 import os
 import re
 import discord
+from discord.errors import HTTPException
 from discord.ext import commands, tasks
 from discord.ui import View, button, select
 from discord import app_commands, ui, Embed, Member, SelectOption, Reaction, ButtonStyle
@@ -683,5 +684,24 @@ async def health_check():
     if ch:
         await ch.send(f'📊 Память: {mem}%, CPU: {cpu}%')
 
+
+async def start_bot():
+    backoff = 5  # начальная задержка в секундах
+    while True:
+        try:
+            await bot.start(DISCORD_TOKEN)
+            return
+        except HTTPException as e:
+            if e.status == 429:
+                retry_after = None
+                if hasattr(e.response, 'headers'):
+                    retry_after = e.response.headers.get('Retry-After')
+                wait = int(retry_after) if retry_after and retry_after.isdigit() else backoff
+                print(f"[429] Rate limited, sleeping for {wait}s before retrying...")
+                await asyncio.sleep(wait)
+                backoff = min(backoff * 2, 60)
+                continue
+            raise
+
 if __name__ == '__main__':
-    bot.run(DISCORD_TOKEN)
+    asyncio.run(start_bot())
