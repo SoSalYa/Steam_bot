@@ -15,6 +15,9 @@ import psutil
 from flask import Flask, jsonify
 from threading import Thread
 
+# Для пагинации
+PAGINATION_VIEWS: dict[int, "GamesView"] = {}
+
 # === Config ===
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 STEAM_API_KEY = os.getenv('STEAM_API_KEY')
@@ -176,8 +179,6 @@ class ConfirmView(ui.View):
 
 
 
-# Словарь для хранения активных представлений по ID сообщения
-PAGINATION_VIEWS: dict[int, "GamesView"] = {}
 
 class GamesView(ui.View):
     def __init__(self, ctx_user: discord.Member, initial_users: List[discord.Member]):
