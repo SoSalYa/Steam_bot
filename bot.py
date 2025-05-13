@@ -539,10 +539,7 @@ async def find_teammates(interaction, игра: str):
     mentions = [f"{interaction.guild.get_member(int(uid)).mention} ({hrs}ч)" for uid, hrs in sorted(matches, key=lambda x: x[1], reverse=True) if interaction.guild.get_member(int(uid))]
     await interaction.followup.send(', '.join(mentions), ephemeral=True)
 
-@bot.tree.command(name='общие_игры')
-async def common_games(interaction: discord.Interaction, user: discord.Member):
-    view = GamesView(interaction.user, [interaction.user, user])
-    await view.render(interaction)
+
 
 
 @tasks.loop(time=time(0,10))
