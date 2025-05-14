@@ -497,14 +497,15 @@ class GamesView(View):
 
 
 
+
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user}, syncing commands…')
 
-    # Удаляем все гильдийные (scope=guild) команды, чтобы не осталось старых дублей
+    # Удаляем все гильдийные (scope=guild) команды, чтобы убрать старые дубли
     for guild in bot.guilds:
-        await bot.tree.clear_commands(guild=guild)
-        await bot.tree.sync(guild=guild)
+        bot.tree.clear_commands(guild=guild)      # clear_commands не является корутиной
+        await bot.tree.sync(guild=guild)          # sync — это корутина, её надо await
         print(f" • Cleared and synced commands for guild {guild.id}")
 
     # Синхронизируем глобальные команды
