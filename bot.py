@@ -50,7 +50,7 @@ PREFIX = '/'
 PORT = int(os.getenv('PORT', '5000'))
 SKIP_BIND_TTL = os.getenv('SKIP_BIND_TTL', 'false').lower() in ['1','true','yes']
 BIND_TTL_HOURS = int(os.getenv('BIND_TTL_HOURS', '24'))
-CACHE_TTL = timedelta(minutes=30)
+SHEETS_CACHE_TTL = 300
 
 # === Intents ===
 INTENTS = discord.Intents.default()
@@ -239,7 +239,7 @@ _sheets_cache = {"timestamp": 0, "data": None}
 def get_sheet_data():
     """Получаем данные из Google Sheets или возвращаем кэшированные (с проверкой CACHE_TTL)."""
     now = time.time()
-    if _sheets_cache["data"] is None or (now - _sheets_cache["timestamp"]) > CACHE_TTL:
+    if _sheets_cache["data"] is None or (now - _sheets_cache["timestamp"]) > SHEETS_CACHE_TTL:
         # Здесь должен быть код получения данных с помощью gspread или другого API
         data = []  # TODO: заменить на реальный запрос к Google Sheets
         _sheets_cache["data"] = data
