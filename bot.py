@@ -645,8 +645,10 @@ async def daily_link_check():
         ident = STEAM_URL_REGEX.match(url).group(1)
         sid = ident if ident.isdigit() else resolve_steamid(ident)
         if sid:
-            for appid, hrs in fetch_owned_games(sid).items():
-    vals.append([uid, str(appid), name, str(hrs)])
+            # вот этот цикл должен быть с отступом в 12 пробелов (4 → функции + 8 → if)
+            for appid, (name, hrs) in fetch_owned_games(sid).items():
+                vals.append([uid, str(appid), name, str(hrs)])
+    # и дальше продолжение функции…
     gws.clear()
     gws.append_rows(vals, value_input_option='USER_ENTERED')
 
