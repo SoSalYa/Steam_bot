@@ -360,35 +360,38 @@ class GamesView(View):
             self.pages.append(emb)
 
     async def render(self, interaction: discord.Interaction):
-        print("[GamesView] render(): start")
         # 1) Получаем данные
         data = self._fetch_games_data()
-        print(f"[GamesView] Got data for {len(data)} users")
 
-        # 2) Проверяем, нужно ли перестраивать страницы
-        needs = self._needs_rebuild()
-        print(f"[GamesView] needs_rebuild = {needs}")
-        if needs:
+        # 2) Проверяем, есть ли вообще игры у участников
+        #    Собираем множества appid для каждого пользователя
+        sets = [set(data.get(u.id, {})) for u in self.users]
+        common = set.intersection(*sets) if sets else set()
+        if not common:
+            # Если нет общих игр, сразу сообщаем и выходим
+            return await interaction.response.send_message(
+                "❗ У выбранных пользователей нет общих игр.", ephemeral=True
+            )
+
+        # 3) Стандартная логика построения страниц
+        print(f"[GamesView] Building pages for {len(common)} common games")
+        if self._needs_rebuild():
             self._build_pages(data)
             self.page_idx = 0
-            print(f"[GamesView] Built {len(self.pages)} pages")
 
-        # 3) Готовим embed
-        self.page_idx = max(0, min(self.page_idx, len(self.pages)-1))
+        # На всякий случай: если после _build_pages pages всё ещё пуст
+        if not self.pages:
+            return await interaction.response.send_message(
+                "❗ Не удалось сформировать страницы с играми.", ephemeral=True
+            )
+
+        # 4) Отправка или редактирование сообщения
         embed = self.pages[self.page_idx]
-        print(f"[GamesView] Prepared embed for page {self.page_idx+1}")
-
-        # 4) Отправка
         if self.message is None:
-            print("[GamesView] Sending initial message...")
             await interaction.response.send_message(embed=embed, view=self)
             self.message = await interaction.original_response()
-            print("[GamesView] Initial message sent, ID =", self.message.id)
-            return
-
-        print("[GamesView] Editing existing message...")
-        await self.message.edit(embed=embed, view=self)
-        print("[GamesView] Message edited")
+        else:
+            await self.message.edit(embed=embed, view=self)
 
     async def refresh(self):
         try:
