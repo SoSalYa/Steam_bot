@@ -51,6 +51,11 @@ PORT = int(os.getenv('PORT', '5000'))
 SKIP_BIND_TTL = os.getenv('SKIP_BIND_TTL', 'false').lower() in ['1','true','yes']
 BIND_TTL_HOURS = int(os.getenv('BIND_TTL_HOURS', '24'))
 CACHE_TTL = timedelta(minutes=30)
+GUILD_IDS = [
+    1218472302975520839,  # server A
+    222222222222222222,  # server B
+    333333333333333333,  # server C
+]
 
 # === Intents ===
 INTENTS = discord.Intents.default()
@@ -59,7 +64,9 @@ INTENTS.presences = True
 INTENTS.message_content = True
 
 # === Bot Setup ===
-bot = commands.Bot(command_prefix=PREFIX, intents=INTENTS)
+bot = commands.Bot(command_prefix='/', intents=discord.Intents.default())
+
+GUILDS = [discord.Object(id=g) for g in GUILD_IDS]
 
 # === Flask Keep-Alive ===
 app = Flask(__name__)
@@ -490,13 +497,11 @@ class GamesView(View):
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user}')
-    Thread(target=run_flask, daemon=True).start()
-    await bot.tree.sync()
-    daily_link_check.start()
-    discount_game_check.start()
-    epic_free_check.start()
-    health_check.start()
+    print(f'Logged in as {bot.user}, syncing commands to {len(GUILD_IDS)} guilds…')
+    for guild in GUILDS:
+        await bot.tree.sync(guild=guild)
+        print(f" • synced to guild {guild.id}")
+    print("All guild syncs complete.")
 
 @bot.event
 async def on_member_join(member):
@@ -622,9 +627,10 @@ async def find_teammates(interaction, игра: str):
     mentions = [f"{interaction.guild.get_member(int(uid)).mention} ({hrs}ч)" for uid, hrs in sorted(matches, key=lambda x: x[1], reverse=True) if interaction.guild.get_member(int(uid))]
     await interaction.followup.send(', '.join(mentions), ephemeral=True)
 
-@bot.tree.command(name='общие_игры')
+@bot.tree.command(name='общие_игры', description='Показать общие игры')
+@app_commands.guilds(*GUILDS)
 async def common_games(interaction: discord.Interaction, user: discord.Member):
-    print("[DEBUG] common_games called with:", interaction.user, user)
+    print(f"[DEBUG] common_games called in guild {interaction.guild_id}")
     view = GamesView(interaction.user, [interaction.user, user])
     await view.render(interaction)
 
