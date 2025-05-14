@@ -360,22 +360,24 @@ class GamesView(View):
             self.pages.append(emb)
 
     async def render(self, interaction: discord.Interaction):
-    data = self._fetch_games_data()
-    sets = [set(data.get(u.id, {})) for u in self.users]
-    common = set.intersection(*sets) if sets else set()
-    if not common:
-        return await interaction.followup.send("❗ У выбранных пользователей нет общих игр.", ephemeral=True)
-    if self._needs_rebuild():
-        self._build_pages(data)
-        self.page_idx = 0
-    if not self.pages:
-        return await interaction.followup.send("❗ Не удалось сформировать страницы с играми.", ephemeral=True)
-    embed = self.pages[self.page_idx]
-    if self.message is None:
-        await interaction.followup.send(embed=embed, view=self)
-        self.message = await interaction.original_response()
-    else:
-        await self.message.edit(embed=embed, view=self)
+        data = self._fetch_games_data()
+        sets = [set(data.get(u.id, {})) for u in self.users]
+        common = set.intersection(*sets) if sets else set()
+        if not common:
+            return await interaction.followup.send("❗ У выбранных пользователей нет общих игр.", ephemeral=True)
+        if self._needs_rebuild():
+            self._build_pages(data)
+            self.page_idx = 0
+        if not self.pages:
+            return await interaction.followup.send("❗ Не удалось сформировать страницы с играми.", ephemeral=True)
+        embed = self.pages[self.page_idx]
+        if self.message is None:
+            await interaction.followup.send(embed=embed, view=self)
+            self.message = await interaction.original_response()
+        else:
+            await self.message.edit(embed=embed, view=self)
+
+
 
     async def refresh(self):
         try:
