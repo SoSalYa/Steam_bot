@@ -236,13 +236,15 @@ def get_game_tags(app_id: int):
 _sheets_cache = {"timestamp": 0, "data": None}
 
 def get_sheet_data():
-    """Получаем данные из Google Sheets или возвращаем кэшированные (с проверкой CACHE_TTL)."""
+    """Кэшированное чтение из листа Games."""
     now = time.time()
     if _sheets_cache["data"] is None or (now - _sheets_cache["timestamp"]) > SHEETS_CACHE_TTL:
-        # Здесь должен быть код получения данных с помощью gspread или другого API
-        data = []  # TODO: заменить на реальный запрос к Google Sheets
-        _sheets_cache["data"] = data
-        _sheets_cache["timestamp"] = now
+        try:
+            vals = init_gspread_client().worksheet('Games').get_all_values()
+            _sheets_cache["data"] = vals
+            _sheets_cache["timestamp"] = now
+        except Exception:
+            _sheets_cache["data"] = []  # при ошибке просто пусто
     return _sheets_cache["data"]
 
 STEAM_TAGS = [
@@ -277,14 +279,10 @@ class GamesView(View):
             self.add_item(btn)
 
     def _fetch_games_data(self):
-        now = datetime.utcnow()
-        if GAMES_CACHE.is_fresh(CACHE_TTL):
-            return GAMES_CACHE.data
-
-        vals = init_gspread_client().worksheet('Games').get_all_values()
-        rows = vals[1:]
+        # заменяем прямой вызов gspread на наш кэш
+        vals = get_sheet_data()
         data: dict[int, dict] = {}
-        for row in rows:
+        for row in vals[1:]:  # пропускаем заголовок
             if len(row) < 4:
                 continue
             uid_str, appid_str, name, hrs_str = row[:4]
@@ -295,8 +293,6 @@ class GamesView(View):
             except ValueError:
                 continue
             data.setdefault(uid, {})[appid] = {'name': name, 'hrs': hrs}
-
-        GAMES_CACHE.update(data)
         return data
 
     def _needs_rebuild(self):
@@ -311,36 +307,17 @@ class GamesView(View):
         return False
 
     def _build_pages(self, data):
+        # строим список общих appid
         sets = [set(data.get(u.id, {})) for u in self.users]
         common = set.intersection(*sets) if sets else set()
-        if self.filters:
-            filtered = set()
-            for appid in common:
-                tags = fetch_game_tags(appid)
-                if any(f.replace('_',' ') in tags for f in self.filters):
-                    filtered.add(appid)
-            common = filtered
+        # сортируем по алфавиту названия для текущего пользователя
+        sorted_list = sorted(
+            common,
+            key=lambda a: data[self.ctx_user.id][a]['name'].lower(),
+            reverse=not self.sort_asc
+        )
 
-        if self.sort_key == 'alphabet':
-            sorted_list = sorted(
-                common,
-                key=lambda a: data[self.ctx_user.id][a]['name'].lower(),
-                reverse=not self.sort_asc
-            )
-        elif self.sort_key == 'you':
-            me_map = data.get(self.ctx_user.id, {})
-            sorted_list = sorted(
-                common,
-                key=lambda a: me_map.get(a, {}).get('hrs', 0),
-                reverse=not self.sort_asc
-            )
-        else:
-            sorted_list = sorted(
-                common,
-                key=lambda a: sum(data[u.id].get(a, {}).get('hrs',0) for u in self.users),
-                reverse=not self.sort_asc
-            )
-
+        # разбиваем на страницы
         self.pages.clear()
         per_page = 10
         total = len(sorted_list)
@@ -354,7 +331,6 @@ class GamesView(View):
             ) or "Нет общих игр."
             emb = Embed(title=f"Общие игры ({total})", description=desc)
             emb.add_field(name="Сортировка", value=f"{self.sort_key}{' ▲' if self.sort_asc else ' ▼'}", inline=True)
-            emb.add_field(name="Фильтры",     value=", ".join(self.filters) or "все", inline=True)
             emb.add_field(name="Участники",   value=", ".join(u.display_name for u in self.users), inline=False)
             emb.set_footer(text=f"Стр. {len(self.pages)+1}/{(total-1)//per_page+1}")
             self.pages.append(emb)
