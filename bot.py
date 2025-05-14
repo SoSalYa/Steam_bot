@@ -794,4 +794,7 @@ async def start_bot():
             raise
 
 if __name__ == '__main__':
-    asyncio.run(start_bot())
+    # 1) Запускаем Flask-поток прямо при старте, чтобы открыть порт
+    Thread(target=run_flask, daemon=True).start()
+    # 2) Затем стартуем бота (блокирующий вызов)
+    bot.run(DISCORD_TOKEN)
