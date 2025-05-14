@@ -596,31 +596,36 @@ async def link_steam(interaction: discord.Interaction, steam_url: str):
     )
     
 @bot.tree.command(name='отвязать_steam')
-async def unlink_steam(interaction):
+async def unlink_steam(interaction: discord.Interaction):
+    # 1) Деферим ответ, чтобы потом использовать followup
+    await interaction.response.defer(ephemeral=True)
+
     sh = init_gspread_client()
-    # Удаляем из Profiles
+    # --- Profiles ---
     pws = sh.worksheet('Profiles')
     idx, _ = get_profile_row(pws, interaction.user.id)
     if not idx:
-        return await safe_respond(interaction, content='ℹ️ Профиль не найден.', ephemeral=True)
+        return await interaction.followup.send('ℹ️ Профиль не найден.', ephemeral=True)
+
     vals = pws.get_all_values()
     vals.pop(idx - 1)
     pws.clear()
-    pws.append_rows(vals)
+    pws.append_rows(vals, value_input_option='USER_ENTERED')
 
-    # Удаляем из Games
+    # --- Games ---
     gws = sh.worksheet('Games')
     all_games = gws.get_all_values()
-    # во всех непустых строках, где первый столбец не наш user_id
-    kept = [r for r in all_games
-            if len(r) >= 1 and r[0] != str(interaction.user.id)]
-    # Гарантируем, что первая строка — это заголовки
+    # Фильтруем только непустые строки и пропускаем ваш discord_id
+    kept = [row for row in all_games
+            if len(row) >= 1 and row[0] != str(interaction.user.id)]
+    # Вставляем заголовок в начало, если он был
     if all_games:
         kept.insert(0, all_games[0])
     gws.clear()
     gws.append_rows(kept, value_input_option='USER_ENTERED')
 
-    await safe_respond(interaction, content='✅ Профиль отвязан.', ephemeral=True)
+    # --- Финальный ответ ---
+    await interaction.followup.send('✅ Профиль отвязан.', ephemeral=True)
 
 @bot.tree.command(name='найти_тиммейтов')
 @app_commands.describe(игра='Название игры')
