@@ -356,27 +356,18 @@ class GamesView(View):
 
         embed = self.pages[self.page_idx]
 
-        # Первый публичный ответ с view
         if self.message is None:
             await interaction.response.send_message(embed=embed, view=self)
             self.message = await interaction.original_response()
+
             if len(self.pages) > 1:
                 await self.message.add_reaction("⬅️")
                 await self.message.add_reaction("➡️")
+
+            PAGINATION_VIEWS[self.message.id] = self
             return
 
-        # Редактируем сообщение и вешаем/снимаем реакции
         await self.message.edit(embed=embed, view=self)
-        existing = {r.emoji for r in self.message.reactions}
-        if self.page_idx > 0 and "⬅️" not in existing:
-            await self.message.add_reaction("⬅️")
-        if self.page_idx == 0 and "⬅️" in existing:
-            await self.message.remove_reaction("⬅️", self.message.guild.me)
-        if self.page_idx < len(self.pages) - 1 and "➡️" not in existing:
-            await self.message.add_reaction("➡️")
-        if self.page_idx == len(self.pages) - 1 and "➡️" in existing:
-            await self.message.remove_reaction("➡️", self.message.guild.me)
-
 
     async def refresh(self):
         try:
@@ -809,6 +800,26 @@ async def start_bot():
                 backoff = min(backoff * 2, 60)
                 continue
             raise
+
+@bot.event
+async def on_reaction_add(reaction: discord.Reaction, user: discord.User):
+    if user.bot: return
+    view = PAGINATION_VIEWS.get(reaction.message.id)
+    if not view: return
+    if reaction.emoji == "➡️":
+        view.page_idx = min(len(view.pages) - 1, view.page_idx + 1)
+    elif reaction.emoji == "⬅️":
+        view.page_idx = max(0, view.page_idx - 1)
+    else:
+        return
+    if view._needs_rebuild():
+        data = view._fetch_games_data()
+        view._build_pages(data)
+        view.page_idx = min(view.page_idx, len(view.pages) - 1)
+    embed = view.pages[view.page_idx]
+    await reaction.message.edit(embed=embed, view=view)
+    await reaction.message.remove_reaction(reaction.emoji, user)
+
 
 if __name__ == '__main__':
     # 1) Запускаем Flask-поток прямо при старте, чтобы открыть порт
