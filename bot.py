@@ -501,7 +501,11 @@ class GamesView(View):
 async def on_ready():
     print(f'Logged in as {bot.user}, syncing commands…')
     try:
-        await bot.tree.sync()                   # синхронизируем все глобальные команды
+        await bot.tree.sync()
+        # Очистим все гильдийные команды, оставив только глобальные:
+        for guild in bot.guilds:
+        bot.tree.clear_commands(guild=guild)
+          await bot.tree.sync(guild=guild)# синхронизируем все глобальные команды
         print(" • Synced global commands.")
     except Exception as e:
         print(f" ! Failed to sync commands: {e}")
