@@ -83,7 +83,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapi
 REQUIRED_SHEETS = ['Profiles', 'Games', 'SentSales', 'SentEpic']
 HEADERS = {
     'Profiles': ['discord_id', 'steam_url', 'last_bound'],
-    'Games':    ['discord_id', 'game_name', 'playtime'],
+    'Games':    ['discord_id', 'appid', 'game_name', 'playtime'],
     'SentSales':['game_link', 'discount_end'],
     'SentEpic':['game_title', 'offer_end']
 }
