@@ -237,15 +237,17 @@ _sheets_cache = {"timestamp": 0, "data": None}
 
 def get_sheet_data():
     """Кэшированное чтение из листа Games."""
-    now = time.time()
-    if _sheets_cache["data"] is None or (now - _sheets_cache["timestamp"]) > SHEETS_CACHE_TTL:
+    now_ts = datetime.utcnow().timestamp()
+    # _sheets_cache хранит поле "timestamp" как UNIX-время
+    if _sheets_cache["data"] is None or (now_ts - _sheets_cache["timestamp"]) > SHEETS_CACHE_TTL:
         try:
             vals = init_gspread_client().worksheet('Games').get_all_values()
             _sheets_cache["data"] = vals
-            _sheets_cache["timestamp"] = now
+            _sheets_cache["timestamp"] = now_ts
         except Exception:
-            _sheets_cache["data"] = []  # при ошибке просто пусто
+            _sheets_cache["data"] = []
     return _sheets_cache["data"]
+
 
 STEAM_TAGS = [
     "Co-op", "Remote Play Together", "Multiplayer", "Singleplayer",
