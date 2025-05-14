@@ -624,8 +624,9 @@ async def find_teammates(interaction, игра: str):
 
 @bot.tree.command(name='общие_игры')
 async def common_games(interaction: discord.Interaction, user: discord.Member):
+    print("[DEBUG] common_games called with:", interaction.user, user)
     view = GamesView(interaction.user, [interaction.user, user])
-    await view.render(interaction)  # сразу вызов плейсхолдера + фон
+    await view.render(interaction)
 
 
 @tasks.loop(time=time(0,10))
