@@ -339,45 +339,44 @@ class GamesView(View):
 
     async def render(self, interaction: discord.Interaction):
         data = self._fetch_games_data()
-        # соберём общие appid
         sets = [set(data.get(u.id, {})) for u in self.users]
         common = set.intersection(*sets) if sets else set()
         if not common:
-            return await interaction.followup.send("❗ У выбранных пользователей нет общих игр.", ephemeral=True)
+            return await interaction.followup.send(
+                "❗ У выбранных пользователей нет общих игр.", ephemeral=True
+            )
 
         if self._needs_rebuild():
             self._build_pages(data)
             self.page_idx = 0
         if not self.pages:
-            return await interaction.followup.send("❗ Не удалось сформировать страницы.", ephemeral=True)
+            return await interaction.followup.send(
+                "❗ Не удалось сформировать страницы.", ephemeral=True
+            )
 
         embed = self.pages[self.page_idx]
 
-        # Первый раз — через response (публично)
+        # Первый раз — через followup (потому что response уже deferred)
         if self.message is None:
-            await interaction.response.send_message(embed=embed)
+            await interaction.followup.send(embed=embed)
             self.message = await interaction.original_response()
 
-            # если есть куда листать — вешаем стрелки
             if len(self.pages) > 1:
                 await self.message.add_reaction("⬅️")
                 await self.message.add_reaction("➡️")
             return
 
-        # Дальше — просто редактируем и синхронизируем реакции
+        # Дальше — редактируем и синхронизируем реакции
         await self.message.edit(embed=embed)
         existing = {r.emoji for r in self.message.reactions}
-        # ⬅️
         if self.page_idx > 0 and "⬅️" not in existing:
             await self.message.add_reaction("⬅️")
         if self.page_idx == 0 and "⬅️" in existing:
             await self.message.remove_reaction("⬅️", self.message.guild.me)
-        # ➡️
         if self.page_idx < len(self.pages) - 1 and "➡️" not in existing:
             await self.message.add_reaction("➡️")
         if self.page_idx == len(self.pages) - 1 and "➡️" in existing:
             await self.message.remove_reaction("➡️", self.message.guild.me)
-
 
 
     async def refresh(self):
