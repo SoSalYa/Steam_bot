@@ -50,6 +50,7 @@ PREFIX = '/'
 PORT = int(os.getenv('PORT', '5000'))
 SKIP_BIND_TTL = os.getenv('SKIP_BIND_TTL', 'false').lower() in ['1','true','yes']
 BIND_TTL_HOURS = int(os.getenv('BIND_TTL_HOURS', '24'))
+CACHE_TTL = timedelta(minutes=30)
 SHEETS_CACHE_TTL = 300
 
 # === Intents ===
@@ -206,8 +207,6 @@ class ConfirmView(ui.View):
 
 
 
-# Константа для времени жизни кэша Google Sheets (в секундах)
-CACHE_TTL = 300
 
 # Кэш для тегов игр (Steam)
 @functools.lru_cache(maxsize=None)
