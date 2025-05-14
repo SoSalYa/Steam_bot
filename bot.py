@@ -360,38 +360,22 @@ class GamesView(View):
             self.pages.append(emb)
 
     async def render(self, interaction: discord.Interaction):
-        # 1) Получаем данные
-        data = self._fetch_games_data()
-
-        # 2) Проверяем, есть ли вообще игры у участников
-        #    Собираем множества appid для каждого пользователя
-        sets = [set(data.get(u.id, {})) for u in self.users]
-        common = set.intersection(*sets) if sets else set()
-        if not common:
-            # Если нет общих игр, сразу сообщаем и выходим
-            return await interaction.response.send_message(
-                "❗ У выбранных пользователей нет общих игр.", ephemeral=True
-            )
-
-        # 3) Стандартная логика построения страниц
-        print(f"[GamesView] Building pages for {len(common)} common games")
-        if self._needs_rebuild():
-            self._build_pages(data)
-            self.page_idx = 0
-
-        # На всякий случай: если после _build_pages pages всё ещё пуст
-        if not self.pages:
-            return await interaction.response.send_message(
-                "❗ Не удалось сформировать страницы с играми.", ephemeral=True
-            )
-
-        # 4) Отправка или редактирование сообщения
-        embed = self.pages[self.page_idx]
-        if self.message is None:
-            await interaction.response.send_message(embed=embed, view=self)
-            self.message = await interaction.original_response()
-        else:
-            await self.message.edit(embed=embed, view=self)
+    data = self._fetch_games_data()
+    sets = [set(data.get(u.id, {})) for u in self.users]
+    common = set.intersection(*sets) if sets else set()
+    if not common:
+        return await interaction.followup.send("❗ У выбранных пользователей нет общих игр.", ephemeral=True)
+    if self._needs_rebuild():
+        self._build_pages(data)
+        self.page_idx = 0
+    if not self.pages:
+        return await interaction.followup.send("❗ Не удалось сформировать страницы с играми.", ephemeral=True)
+    embed = self.pages[self.page_idx]
+    if self.message is None:
+        await interaction.followup.send(embed=embed, view=self)
+        self.message = await interaction.original_response()
+    else:
+        await self.message.edit(embed=embed, view=self)
 
     async def refresh(self):
         try:
@@ -658,9 +642,11 @@ async def find_teammates(interaction, игра: str):
     mentions = [f"{interaction.guild.get_member(int(uid)).mention} ({hrs}ч)" for uid, hrs in sorted(matches, key=lambda x: x[1], reverse=True) if interaction.guild.get_member(int(uid))]
     await interaction.followup.send(', '.join(mentions), ephemeral=True)
 
+
 @bot.tree.command(name='общие_игры', description='Показать общие игры')
 async def common_games(interaction: discord.Interaction, user: discord.Member):
-    print(f"[DEBUG] common_games called in guild {interaction.guild_id}")
+    await interaction.response.defer(ephemeral=True)
+
     view = GamesView(interaction.user, [interaction.user, user])
     await view.render(interaction)
 
