@@ -342,32 +342,31 @@ class GamesView(View):
         sets = [set(data.get(u.id, {})) for u in self.users]
         common = set.intersection(*sets) if sets else set()
         if not common:
-            return await interaction.followup.send(
-                "❗ У выбранных пользователей нет общих игр.", ephemeral=True
-            )
+            return await interaction.followup.send("❗ У выбранных пользователей нет общих игр.", ephemeral=True)
 
         if self._needs_rebuild():
             self._build_pages(data)
             self.page_idx = 0
         if not self.pages:
-            return await interaction.followup.send(
-                "❗ Не удалось сформировать страницы.", ephemeral=True
-            )
+            return await interaction.followup.send("❗ Не удалось сформировать страницы.", ephemeral=True)
 
         embed = self.pages[self.page_idx]
 
-        # Первый раз — через followup (потому что response уже deferred)
+        # Отправляем первый раз
         if self.message is None:
-            await interaction.followup.send(embed=embed)
+            await interaction.response.send_message(embed=embed, view=self)
             self.message = await interaction.original_response()
 
+            # реакции навигации (если нужно)
             if len(self.pages) > 1:
                 await self.message.add_reaction("⬅️")
                 await self.message.add_reaction("➡️")
             return
 
-        # Дальше — редактируем и синхронизируем реакции
-        await self.message.edit(embed=embed)
+        # Редактируем embed **и** view
+        await self.message.edit(embed=embed, view=self)
+
+        # и синхронизируем стрелки
         existing = {r.emoji for r in self.message.reactions}
         if self.page_idx > 0 and "⬅️" not in existing:
             await self.message.add_reaction("⬅️")
