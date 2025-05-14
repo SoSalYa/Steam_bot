@@ -277,20 +277,32 @@ class GamesView(View):
             self.add_item(btn)
 
     def _fetch_games_data(self):
-        now = datetime.utcnow()
-        if GAMES_CACHE.is_fresh(CACHE_TTL):
-            return GAMES_CACHE.data
-        records = init_gspread_client().worksheet('Games').get_all_records()
-        data = {}
-        for r in records:
-            uid = int(r['discord_id'])
-            appid = int(r['appid'])
-            data.setdefault(uid, {})[appid] = {
-                'name': r['game_name'],
-                'hrs': int(r['playtime'])
-            }
-        GAMES_CACHE.update(data)
-        return data
+    now = datetime.utcnow()
+    if GAMES_CACHE.is_fresh(CACHE_TTL):
+        return GAMES_CACHE.data
+
+    # Получаем все строки (включая шапку) и пропускаем первую
+    vals = init_gspread_client().worksheet('Games').get_all_values()
+    rows = vals[1:]  # от второго ряда — только данные
+
+    data: dict[int, dict] = {}
+    for row in rows:
+        # Ожидаем: [discord_id, appid, game_name, playtime]
+        if len(row) < 4:
+            continue  # пропускаем неполные строки
+        uid_str, appid_str, name, hrs_str = row[:4]
+        # пытаемся сконвертировать строки в числа
+        try:
+            uid = int(uid_str)
+            appid = int(appid_str)
+            hrs = int(hrs_str)
+        except ValueError:
+            continue  # если это всё ещё «discord_id» или что-то нечисловое
+
+        data.setdefault(uid, {})[appid] = {'name': name, 'hrs': hrs}
+
+    GAMES_CACHE.update(data)
+    return data
 
     def _needs_rebuild(self):
         state = (
