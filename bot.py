@@ -598,6 +598,7 @@ async def link_steam(interaction: discord.Interaction, steam_url: str):
 @bot.tree.command(name='отвязать_steam')
 async def unlink_steam(interaction):
     sh = init_gspread_client()
+    # Удаляем из Profiles
     pws = sh.worksheet('Profiles')
     idx, _ = get_profile_row(pws, interaction.user.id)
     if not idx:
@@ -606,11 +607,19 @@ async def unlink_steam(interaction):
     vals.pop(idx - 1)
     pws.clear()
     pws.append_rows(vals)
+
+    # Удаляем из Games
     gws = sh.worksheet('Games')
     all_games = gws.get_all_values()
-    kept = [r for r in all_games if r[0] != str(interaction.user.id)]
+    # во всех непустых строках, где первый столбец не наш user_id
+    kept = [r for r in all_games
+            if len(r) >= 1 and r[0] != str(interaction.user.id)]
+    # Гарантируем, что первая строка — это заголовки
+    if all_games:
+        kept.insert(0, all_games[0])
     gws.clear()
-    gws.append_rows(kept)
+    gws.append_rows(kept, value_input_option='USER_ENTERED')
+
     await safe_respond(interaction, content='✅ Профиль отвязан.', ephemeral=True)
 
 @bot.tree.command(name='найти_тиммейтов')
