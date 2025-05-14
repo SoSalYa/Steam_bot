@@ -56,6 +56,7 @@ GUILD_IDS = [
     222222222222222222,  # server B
     333333333333333333,  # server C
 ]
+GUILDS = [discord.Object(id=g) for g in GUILD_IDS]
 
 # === Intents ===
 INTENTS = discord.Intents.default()
@@ -497,11 +498,14 @@ class GamesView(View):
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user}, syncing commands to {len(GUILD_IDS)} guilds…')
+    print(f'Logged in as {bot.user}, syncing commands…')
     for guild in GUILDS:
-        await bot.tree.sync(guild=guild)
-        print(f" • synced to guild {guild.id}")
-    print("All guild syncs complete.")
+        try:
+            await bot.tree.sync(guild=guild)
+            print(f" • Synced commands to guild {guild.id}")
+        except discord.Forbidden:
+            print(f" ! Missing access to guild {guild.id}, skipping.")
+    print("Sync complete.")
 
 @bot.event
 async def on_member_join(member):
