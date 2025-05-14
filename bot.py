@@ -351,9 +351,35 @@ class GamesView(View):
             self.pages.append(emb)
 
     async def render(self, interaction: discord.Interaction):
-        await interaction.response.send_message("🔄 Загружаю общие игры…", view=self)
-        self.message = await interaction.original_response()
-        asyncio.create_task(self.refresh())
+        print("[GamesView] render(): start")
+        # 1) Получаем данные
+        data = self._fetch_games_data()
+        print(f"[GamesView] Got data for {len(data)} users")
+
+        # 2) Проверяем, нужно ли перестраивать страницы
+        needs = self._needs_rebuild()
+        print(f"[GamesView] needs_rebuild = {needs}")
+        if needs:
+            self._build_pages(data)
+            self.page_idx = 0
+            print(f"[GamesView] Built {len(self.pages)} pages")
+
+        # 3) Готовим embed
+        self.page_idx = max(0, min(self.page_idx, len(self.pages)-1))
+        embed = self.pages[self.page_idx]
+        print(f"[GamesView] Prepared embed for page {self.page_idx+1}")
+
+        # 4) Отправка
+        if self.message is None:
+            print("[GamesView] Sending initial message...")
+            await interaction.response.send_message(embed=embed, view=self)
+            self.message = await interaction.original_response()
+            print("[GamesView] Initial message sent, ID =", self.message.id)
+            return
+
+        print("[GamesView] Editing existing message...")
+        await self.message.edit(embed=embed, view=self)
+        print("[GamesView] Message edited")
 
     async def refresh(self):
         try:
