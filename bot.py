@@ -339,6 +339,7 @@ class GamesView(View):
 
     async def render(self, interaction: discord.Interaction):
         data = self._fetch_games_data()
+        # соберём общие appid
         sets = [set(data.get(u.id, {})) for u in self.users]
         common = set.intersection(*sets) if sets else set()
         if not common:
@@ -351,27 +352,31 @@ class GamesView(View):
             return await interaction.followup.send("❗ Не удалось сформировать страницы.", ephemeral=True)
 
         embed = self.pages[self.page_idx]
+
+        # Первый раз — через response (публично)
         if self.message is None:
-            await interaction.followup.send(embed=embed)
+            await interaction.response.send_message(embed=embed)
             self.message = await interaction.original_response()
-            # добавляем реакции сразу после отправки
+
+            # если есть куда листать — вешаем стрелки
             if len(self.pages) > 1:
-                if self.page_idx > 0:
-                    await self.message.add_reaction("⬅️")
-                if self.page_idx < len(self.pages) - 1:
-                    await self.message.add_reaction("➡️")
-        else:
-            await self.message.edit(embed=embed)
-            # синхронизируем реакции под сообщением
-            existing = [r.emoji for r in self.message.reactions]
-            if self.page_idx > 0 and "⬅️" not in existing:
                 await self.message.add_reaction("⬅️")
-            if self.page_idx == 0 and "⬅️" in existing:
-                await self.message.remove_reaction("⬅️", self.message.guild.me)
-            if self.page_idx < len(self.pages) - 1 and "➡️" not in existing:
                 await self.message.add_reaction("➡️")
-            if self.page_idx == len(self.pages) - 1 and "➡️" in existing:
-                await self.message.remove_reaction("➡️", self.message.guild.me)
+            return
+
+        # Дальше — просто редактируем и синхронизируем реакции
+        await self.message.edit(embed=embed)
+        existing = {r.emoji for r in self.message.reactions}
+        # ⬅️
+        if self.page_idx > 0 and "⬅️" not in existing:
+            await self.message.add_reaction("⬅️")
+        if self.page_idx == 0 and "⬅️" in existing:
+            await self.message.remove_reaction("⬅️", self.message.guild.me)
+        # ➡️
+        if self.page_idx < len(self.pages) - 1 and "➡️" not in existing:
+            await self.message.add_reaction("➡️")
+        if self.page_idx == len(self.pages) - 1 and "➡️" in existing:
+            await self.message.remove_reaction("➡️", self.message.guild.me)
 
 
 
@@ -643,8 +648,7 @@ async def find_teammates(interaction, игра: str):
 
 @bot.tree.command(name='общие_игры', description='Показать общие игры')
 async def common_games(interaction: discord.Interaction, user: discord.Member):
-    await interaction.response.defer(ephemeral=True)
-
+    await interaction.response.defer()
     view = GamesView(interaction.user, [interaction.user, user])
     await view.render(interaction)
 
