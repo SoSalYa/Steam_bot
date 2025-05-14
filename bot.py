@@ -51,12 +51,6 @@ PORT = int(os.getenv('PORT', '5000'))
 SKIP_BIND_TTL = os.getenv('SKIP_BIND_TTL', 'false').lower() in ['1','true','yes']
 BIND_TTL_HOURS = int(os.getenv('BIND_TTL_HOURS', '24'))
 CACHE_TTL = timedelta(minutes=30)
-GUILD_IDS = [
-    1218472302975520839,  # server A
-    222222222222222222,  # server B
-    333333333333333333,  # server C
-]
-GUILDS = [discord.Object(id=g) for g in GUILD_IDS]
 
 # === Intents ===
 INTENTS = discord.Intents.default()
@@ -65,9 +59,7 @@ INTENTS.presences = True
 INTENTS.message_content = True
 
 # === Bot Setup ===
-bot = commands.Bot(command_prefix='/', intents=discord.Intents.default())
-
-GUILDS = [discord.Object(id=g) for g in GUILD_IDS]
+bot = commands.Bot(command_prefix='/', intents=INTENTS)
 
 # === Flask Keep-Alive ===
 app = Flask(__name__)
@@ -139,7 +131,7 @@ def fetch_owned_games(steamid):
         }
     )
     games = resp.json().get('response', {}).get('games', []) if resp.ok else []
-    data = {g['name']: g['playtime_forever']//60 for g in games}
+    data = {g['appid']: (g['name'], g['playtime_forever']//60) for g in games}
     steam_cache[steamid] = (now, data)
     return data
 
@@ -183,7 +175,10 @@ class ConfirmView(ui.View):
         games = fetch_owned_games(steamid) if steamid else {}
         g_ws = self.sheet.worksheet('Games')
         old = [r for r in g_ws.get_all_values()[1:] if r[0] != str(self.user_id)]
-        batch = [HEADERS['Games']] + old + [[str(self.user_id), name, str(hrs)] for name, hrs in games.items()]
+        batch = [HEADERS['Games']] + old + [
+    [str(self.user_id), str(appid), name, str(hrs)]
+    for appid, (name, hrs) in games.items()
+]
         g_ws.clear()
         g_ws.append_rows(batch, value_input_option='USER_ENTERED')
 
@@ -499,12 +494,11 @@ class GamesView(View):
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user}, syncing commands…')
-    for guild in GUILDS:
-        try:
-            await bot.tree.sync(guild=guild)
-            print(f" • Synced commands to guild {guild.id}")
-        except discord.Forbidden:
-            print(f" ! Missing access to guild {guild.id}, skipping.")
+    try:
+        await bot.tree.sync()                   # синхронизируем все глобальные команды
+        print(" • Synced global commands.")
+    except Exception as e:
+        print(f" ! Failed to sync commands: {e}")
     print("Sync complete.")
 
 @bot.event
@@ -632,7 +626,6 @@ async def find_teammates(interaction, игра: str):
     await interaction.followup.send(', '.join(mentions), ephemeral=True)
 
 @bot.tree.command(name='общие_игры', description='Показать общие игры')
-@app_commands.guilds(*GUILDS)
 async def common_games(interaction: discord.Interaction, user: discord.Member):
     print(f"[DEBUG] common_games called in guild {interaction.guild_id}")
     view = GamesView(interaction.user, [interaction.user, user])
@@ -652,8 +645,8 @@ async def daily_link_check():
         ident = STEAM_URL_REGEX.match(url).group(1)
         sid = ident if ident.isdigit() else resolve_steamid(ident)
         if sid:
-            for name, hrs in fetch_owned_games(sid).items():
-                vals.append([uid, name, str(hrs)])
+            for appid, hrs in fetch_owned_games(sid).items():
+    vals.append([uid, str(appid), name, str(hrs)])
     gws.clear()
     gws.append_rows(vals, value_input_option='USER_ENTERED')
 
