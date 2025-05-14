@@ -58,6 +58,8 @@ INTENTS = discord.Intents.default()
 INTENTS.members = True
 INTENTS.presences = True
 INTENTS.message_content = True
+INTENTS.reactions = True  
+
 
 # === Bot Setup ===
 bot = commands.Bot(command_prefix='/', intents=INTENTS)
