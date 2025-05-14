@@ -343,17 +343,35 @@ class GamesView(View):
         common = set.intersection(*sets) if sets else set()
         if not common:
             return await interaction.followup.send("❗ У выбранных пользователей нет общих игр.", ephemeral=True)
+
         if self._needs_rebuild():
             self._build_pages(data)
             self.page_idx = 0
         if not self.pages:
-            return await interaction.followup.send("❗ Не удалось сформировать страницы с играми.", ephemeral=True)
+            return await interaction.followup.send("❗ Не удалось сформировать страницы.", ephemeral=True)
+
         embed = self.pages[self.page_idx]
         if self.message is None:
-            await interaction.followup.send(embed=embed, view=self)
+            await interaction.followup.send(embed=embed)
             self.message = await interaction.original_response()
+            # добавляем реакции сразу после отправки
+            if len(self.pages) > 1:
+                if self.page_idx > 0:
+                    await self.message.add_reaction("⬅️")
+                if self.page_idx < len(self.pages) - 1:
+                    await self.message.add_reaction("➡️")
         else:
-            await self.message.edit(embed=embed, view=self)
+            await self.message.edit(embed=embed)
+            # синхронизируем реакции под сообщением
+            existing = [r.emoji for r in self.message.reactions]
+            if self.page_idx > 0 and "⬅️" not in existing:
+                await self.message.add_reaction("⬅️")
+            if self.page_idx == 0 and "⬅️" in existing:
+                await self.message.remove_reaction("⬅️", self.message.guild.me)
+            if self.page_idx < len(self.pages) - 1 and "➡️" not in existing:
+                await self.message.add_reaction("➡️")
+            if self.page_idx == len(self.pages) - 1 and "➡️" in existing:
+                await self.message.remove_reaction("➡️", self.message.guild.me)
 
 
 
