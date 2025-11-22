@@ -34,7 +34,7 @@ TEXTS = {
         'cooldown': '⏳ Try again in {hours}h.',
         'invalid_url': '❌ Invalid Steam profile URL.',
         'profile_unavailable': '❌ Profile is unavailable.',
-        'confirm_link': 'Do you want to link profile **{name}**?',
+        'confirm_link': 'Do you want to link profile **{name}** as **{discord_name}**?',
         'link_success': '✅ Profile `{name}` linked! Loaded {count} games.',
         'link_cancelled': '❌ Linking cancelled.',
         'not_your_request': 'This is not your request.',
@@ -49,6 +49,17 @@ TEXTS = {
         'no': 'No',
         'lang_set': '✅ Language set to English',
         'choose_lang': 'Choose server language:',
+        'cmd_link_steam': 'link_steam',
+        'cmd_link_desc': 'Link your Steam profile',
+        'cmd_link_param': 'Steam profile URL',
+        'cmd_unlink_steam': 'unlink_steam',
+        'cmd_unlink_desc': 'Unlink Steam',
+        'cmd_find_teammates': 'find_teammates',
+        'cmd_find_desc': 'Find players',
+        'cmd_find_param': 'Game name',
+        'cmd_common_games': 'common_games',
+        'cmd_common_desc': 'Show common games',
+        'cmd_common_param': 'User to compare',
     },
     'ru': {
         'not_verified': '❌ Сначала привяжите Steam! Используйте `/привязать_steam`',
@@ -56,7 +67,7 @@ TEXTS = {
         'cooldown': '⏳ Попробуйте снова через {hours}ч.',
         'invalid_url': '❌ Некорректная ссылка на профиль Steam.',
         'profile_unavailable': '❌ Профиль недоступен.',
-        'confirm_link': 'Подтверждаете привязку профиля **{name}**?',
+        'confirm_link': 'Подтверждаете привязку профиля **{name}** как **{discord_name}**?',
         'link_success': '✅ Профиль `{name}` привязан! Загружено {count} игр.',
         'link_cancelled': '❌ Привязка отменена.',
         'not_your_request': 'Это не ваш запрос.',
@@ -71,6 +82,17 @@ TEXTS = {
         'no': 'Нет',
         'lang_set': '✅ Язык установлен: Русский',
         'choose_lang': 'Выберите язык сервера:',
+        'cmd_link_steam': 'привязать_steam',
+        'cmd_link_desc': 'Привязать профиль Steam',
+        'cmd_link_param': 'Ссылка на профиль Steam',
+        'cmd_unlink_steam': 'отвязать_steam',
+        'cmd_unlink_desc': 'Отвязать Steam',
+        'cmd_find_teammates': 'найти_тиммейтов',
+        'cmd_find_desc': 'Найти игроков',
+        'cmd_find_param': 'Название игры',
+        'cmd_common_games': 'общие_игры',
+        'cmd_common_desc': 'Показать общие игры',
+        'cmd_common_param': 'Пользователь для сравнения',
     },
     'ua': {
         'not_verified': "❌ Спочатку прив'яжіть Steam! Використовуйте `/привязати_steam`",
@@ -78,7 +100,7 @@ TEXTS = {
         'cooldown': '⏳ Спробуйте знову через {hours}год.',
         'invalid_url': '❌ Некоректне посилання на профіль Steam.',
         'profile_unavailable': '❌ Профіль недоступний.',
-        'confirm_link': "Підтверджуєте прив'язку профілю **{name}**?",
+        'confirm_link': "Підтверджуєте прив'язку профілю **{name}** як **{discord_name}**?",
         'link_success': "✅ Профіль `{name}` прив'язано! Завантажено {count} ігор.",
         'link_cancelled': "❌ Прив'язку скасовано.",
         'not_your_request': 'Це не ваш запит.',
@@ -93,6 +115,17 @@ TEXTS = {
         'no': 'Ні',
         'lang_set': '✅ Мову встановлено: Українська',
         'choose_lang': 'Оберіть мову сервера:',
+        'cmd_link_steam': 'привязати_steam',
+        'cmd_link_desc': "Прив'язати профіль Steam",
+        'cmd_link_param': 'Посилання на профіль Steam',
+        'cmd_unlink_steam': 'відвязати_steam',
+        'cmd_unlink_desc': "Відв'язати Steam",
+        'cmd_find_teammates': 'знайти_тіммейтів',
+        'cmd_find_desc': 'Знайти гравців',
+        'cmd_find_param': 'Назва гри',
+        'cmd_common_games': 'спільні_ігри',
+        'cmd_common_desc': 'Показати спільні ігри',
+        'cmd_common_param': 'Користувач для порівняння',
     }
 }
 
@@ -134,7 +167,6 @@ async def init_db():
     global db_pool
     db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
     
-    # Создаем таблицу языков если нет
     async with db_pool.acquire() as conn:
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS server_settings (
@@ -142,7 +174,6 @@ async def init_db():
                 language TEXT DEFAULT 'en'
             )
         ''')
-        # Загружаем языки в кэш
         rows = await conn.fetch('SELECT guild_id, language FROM server_settings')
         for row in rows:
             server_langs[row['guild_id']] = row['language']
@@ -173,7 +204,7 @@ async def fetch_owned_games(steamid: str) -> dict:
             params={
                 'key': STEAM_API_KEY,
                 'steamid': steamid,
-                'include_appinfo': 'true',  # строка вместо bool!
+                'include_appinfo': 'true',
                 'include_played_free_games': 'true'
             }
         ) as resp:
@@ -191,6 +222,21 @@ def parse_steam_url(url: str) -> str | None:
 
 async def has_verified_role(member: discord.Member) -> bool:
     return any(r.name.lower() == VERIFIED_ROLE.lower() for r in member.roles)
+
+async def ensure_verified_role(guild: discord.Guild) -> discord.Role:
+    """Создаёт роль 'steam verified' если её нет"""
+    role = discord.utils.get(guild.roles, name=VERIFIED_ROLE)
+    if not role:
+        try:
+            role = await guild.create_role(
+                name=VERIFIED_ROLE,
+                color=discord.Color.blue(),
+                reason="Auto-created by Steam Bot"
+            )
+            print(f"Created role '{VERIFIED_ROLE}' in guild {guild.name}")
+        except discord.Forbidden:
+            print(f"Missing permissions to create role in {guild.name}")
+    return role
 
 # === Database Functions ===
 async def get_profile(discord_id: int):
@@ -269,14 +315,14 @@ class LanguageView(ui.View):
 
 # === Confirm View ===
 class ConfirmView(ui.View):
-    def __init__(self, user_id: int, steam_url: str, profile_name: str, guild_id: int):
+    def __init__(self, user_id: int, steam_url: str, profile_name: str, discord_name: str, guild_id: int):
         super().__init__(timeout=60)
         self.user_id = user_id
         self.steam_url = steam_url
         self.profile_name = profile_name
+        self.discord_name = discord_name
         self.guild_id = guild_id
         
-        # Обновляем текст кнопок
         self.children[0].label = t(guild_id, 'yes')
         self.children[1].label = t(guild_id, 'no')
 
@@ -294,7 +340,7 @@ class ConfirmView(ui.View):
         games = await fetch_owned_games(steamid) if steamid else {}
         await save_games(self.user_id, games)
 
-        role = discord.utils.get(interaction.guild.roles, name=VERIFIED_ROLE)
+        role = await ensure_verified_role(interaction.guild)
         member = interaction.guild.get_member(self.user_id)
         if role and member:
             try:
@@ -384,9 +430,11 @@ async def on_ready():
     await init_db()
     print(f'Logged in as {bot.user}')
     
+    # Регистрируем команды для каждого языка на каждом сервере
     for guild in bot.guilds:
         bot.tree.clear_commands(guild=guild)
-        await bot.tree.sync(guild=guild)
+        lang = server_langs.get(guild.id, 'en')
+        await register_commands_for_guild(guild, lang)
     
     await bot.tree.sync()
     print("Commands synced")
@@ -432,10 +480,42 @@ async def on_reaction_add(reaction, user):
     await reaction.message.edit(embed=view.pages[view.page_idx])
     await reaction.message.remove_reaction(reaction.emoji, user)
 
-# === Slash Commands ===
-@bot.tree.command(name='link_steam', description='Link your Steam profile / Привязать Steam')
-@app_commands.describe(steam_url='Steam profile URL / Ссылка на профиль Steam')
-async def link_steam(interaction: discord.Interaction, steam_url: str):
+# === Dynamic Command Registration ===
+async def register_commands_for_guild(guild: discord.Guild, lang: str):
+    """Регистрирует команды на выбранном языке для гильдии"""
+    
+    # link_steam
+    @app_commands.command(name=t(guild.id, 'cmd_link_steam'), description=t(guild.id, 'cmd_link_desc'))
+    @app_commands.describe(steam_url=t(guild.id, 'cmd_link_param'))
+    async def link_steam_cmd(interaction: discord.Interaction, steam_url: str):
+        await link_steam_handler(interaction, steam_url)
+    
+    # unlink_steam
+    @app_commands.command(name=t(guild.id, 'cmd_unlink_steam'), description=t(guild.id, 'cmd_unlink_desc'))
+    async def unlink_steam_cmd(interaction: discord.Interaction):
+        await unlink_steam_handler(interaction)
+    
+    # find_teammates
+    @app_commands.command(name=t(guild.id, 'cmd_find_teammates'), description=t(guild.id, 'cmd_find_desc'))
+    @app_commands.describe(game=t(guild.id, 'cmd_find_param'))
+    async def find_teammates_cmd(interaction: discord.Interaction, game: str):
+        await find_teammates_handler(interaction, game)
+    
+    # common_games
+    @app_commands.command(name=t(guild.id, 'cmd_common_games'), description=t(guild.id, 'cmd_common_desc'))
+    @app_commands.describe(user=t(guild.id, 'cmd_common_param'))
+    async def common_games_cmd(interaction: discord.Interaction, user: discord.Member):
+        await common_games_handler(interaction, user)
+    
+    bot.tree.add_command(link_steam_cmd, guild=guild)
+    bot.tree.add_command(unlink_steam_cmd, guild=guild)
+    bot.tree.add_command(find_teammates_cmd, guild=guild)
+    bot.tree.add_command(common_games_cmd, guild=guild)
+    
+    await bot.tree.sync(guild=guild)
+
+# === Command Handlers ===
+async def link_steam_handler(interaction: discord.Interaction, steam_url: str):
     await interaction.response.defer(ephemeral=True)
     gid = interaction.guild_id
 
@@ -462,17 +542,17 @@ async def link_steam(interaction: discord.Interaction, steam_url: str):
 
     name_m = re.search(r'<title>(.*?) on Steam</title>', html)
     profile_name = name_m.group(1) if name_m else 'Unknown'
+    discord_name = interaction.user.display_name
     
     embed = Embed(
         title="🔗 Steam Link",
-        description=t(gid, 'confirm_link', name=profile_name),
+        description=t(gid, 'confirm_link', name=profile_name, discord_name=discord_name),
         color=0x1a9fff
     )
-    view = ConfirmView(interaction.user.id, steam_url, profile_name, gid)
+    view = ConfirmView(interaction.user.id, steam_url, profile_name, discord_name, gid)
     await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
-@bot.tree.command(name='unlink_steam', description='Unlink Steam / Отвязать Steam')
-async def unlink_steam(interaction: discord.Interaction):
+async def unlink_steam_handler(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     gid = interaction.guild_id
     
@@ -482,7 +562,6 @@ async def unlink_steam(interaction: discord.Interaction):
 
     await delete_profile(interaction.user.id)
     
-    # Убираем роль
     role = discord.utils.get(interaction.guild.roles, name=VERIFIED_ROLE)
     if role:
         try:
@@ -492,9 +571,7 @@ async def unlink_steam(interaction: discord.Interaction):
     
     await interaction.followup.send(t(gid, 'unlink_success'), ephemeral=True)
 
-@bot.tree.command(name='find_teammates', description='Find players / Найти тиммейтов')
-@app_commands.describe(game='Game name / Название игры')
-async def find_teammates(interaction: discord.Interaction, game: str):
+async def find_teammates_handler(interaction: discord.Interaction, game: str):
     gid = interaction.guild_id
     
     if not await has_verified_role(interaction.user):
@@ -519,9 +596,7 @@ async def find_teammates(interaction: discord.Interaction, game: str):
     )
     await interaction.followup.send(embed=embed, ephemeral=True)
 
-@bot.tree.command(name='common_games', description='Show common games / Показать общие игры')
-@app_commands.describe(user='User to compare / Пользователь для сравнения')
-async def common_games(interaction: discord.Interaction, user: discord.Member):
+async def common_games_handler(interaction: discord.Interaction, user: discord.Member):
     gid = interaction.guild_id
     
     if not await has_verified_role(interaction.user):
@@ -530,6 +605,7 @@ async def common_games(interaction: discord.Interaction, user: discord.Member):
     view = GamesView(interaction.user, [interaction.user, user], gid)
     await view.render(interaction)
 
+# === Global Slash Commands ===
 @bot.tree.command(name='set_language', description='Set server language (Admin only)')
 @app_commands.describe(language='Language / Язык')
 @app_commands.choices(language=[
@@ -541,6 +617,11 @@ async def common_games(interaction: discord.Interaction, user: discord.Member):
 async def set_language(interaction: discord.Interaction, language: str):
     await set_server_lang(interaction.guild_id, language)
     await interaction.response.send_message(TEXTS[language]['lang_set'], ephemeral=True)
+    
+    # Перерегистрируем команды с новым языком
+    bot.tree.clear_commands(guild=interaction.guild)
+    await register_commands_for_guild(interaction.guild, language)
+    await interaction.followup.send("✅ Commands updated to new language!", ephemeral=True)
 
 # === Tasks ===
 @tasks.loop(time=dtime(0, 10))
@@ -564,7 +645,6 @@ async def discount_game_check():
     if not ch:
         return
     
-    # Исправленный URL для 100% скидок
     url = 'https://store.steampowered.com/search/?maxprice=free&specials=1&ndl=1'
     
     async with aiohttp.ClientSession() as session:
@@ -589,7 +669,6 @@ async def discount_game_check():
             if link in existing:
                 continue
             
-            # Проверяем что это действительно бесплатная игра со скидкой
             price_elem = item.select_one('.discount_final_price')
             if not price_elem or 'Free' not in price_elem.text:
                 continue
