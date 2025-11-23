@@ -65,6 +65,33 @@ TEXTS = {
         'sort_alphabetical': '🔤 Alphabetical',
         'sort_total_hours': '📊 By Total Playtime',
         'sort_your_hours': "⭐ By {user}'s Playtime",
+        'timeout_expired': '⏰ This menu has expired',
+        'confirmation_expired': '⏰ Confirmation expired',
+        'privacy_note': '🔒 Privacy',
+        'privacy_text': 'Your profile must be **public** to sync games',
+        'profile_info': 'Profile',
+        'next_steps': '📊 Next Steps',
+        'next_steps_text': '• Use `/common_games` to find games with friends\n• Use `/find_teammates` to find players for a game\n• Your games will sync automatically every 24h',
+        'profile_linked': 'Steam Bot • Profile linked',
+        'no_profile': 'ℹ️ No Profile Found',
+        'no_profile_text': "You don't have a Steam profile linked.\n\nUse `/link_steam` to link your profile!",
+        'profile_unlinked_title': '✅ Profile Unlinked',
+        'profile_unlinked_desc': 'Your Steam profile has been successfully unlinked.',
+        'previous_profile': 'Previous profile',
+        'games_removed': '🎮 Games removed',
+        'all_synced': 'All synced games',
+        'role_removed': '🎖️ Role removed',
+        'want_relink': '💡 Want to link again?',
+        'relink_text': 'You can re-link your profile anytime using `/link_steam`',
+        'ranks': '🏅 Ranks',
+        'ranks_text': '🏆 500h+ • 💎 200h+ • ⭐ 100h+ • ✨ 50h+ • 🎯 10h+ • 🆕 <10h',
+        'requested_by': 'Requested by',
+        'note': 'ℹ️ Note',
+        'showing_top': 'Showing top 15 of {total} players',
+        'found_players': 'Found {count} player(s)',
+        'select_game': '🎮 Select a game',
+        'type_to_search': 'Type to search for games...',
+        'no_games_found': 'No games found matching "{query}"',
     },
     'ru': {
         'not_verified': '❌ Сначала привяжите Steam! Используйте `/привязать_steam`',
@@ -103,6 +130,33 @@ TEXTS = {
         'sort_alphabetical': '🔤 По алфавиту',
         'sort_total_hours': '📊 По общему времени',
         'sort_your_hours': "⭐ По времени {user}",
+        'timeout_expired': '⏰ Это меню истекло',
+        'confirmation_expired': '⏰ Подтверждение истекло',
+        'privacy_note': '🔒 Приватность',
+        'privacy_text': 'Ваш профиль должен быть **публичным** для синхронизации игр',
+        'profile_info': 'Профиль',
+        'next_steps': '📊 Следующие шаги',
+        'next_steps_text': '• Используйте `/общие_игры` для поиска игр с друзьями\n• Используйте `/найти_тиммейтов` для поиска игроков\n• Ваши игры будут синхронизироваться автоматически каждые 24ч',
+        'profile_linked': 'Steam Bot • Профиль привязан',
+        'no_profile': 'ℹ️ Профиль не найден',
+        'no_profile_text': "У вас нет привязанного профиля Steam.\n\nИспользуйте `/привязать_steam` для привязки!",
+        'profile_unlinked_title': '✅ Профиль отвязан',
+        'profile_unlinked_desc': 'Ваш профиль Steam успешно отвязан.',
+        'previous_profile': 'Предыдущий профиль',
+        'games_removed': '🎮 Игры удалены',
+        'all_synced': 'Все синхронизированные игры',
+        'role_removed': '🎖️ Роль удалена',
+        'want_relink': '💡 Хотите привязать снова?',
+        'relink_text': 'Вы можете перепривязать профиль в любое время используя `/привязать_steam`',
+        'ranks': '🏅 Ранги',
+        'ranks_text': '🏆 500ч+ • 💎 200ч+ • ⭐ 100ч+ • ✨ 50ч+ • 🎯 10ч+ • 🆕 <10ч',
+        'requested_by': 'Запросил',
+        'note': 'ℹ️ Примечание',
+        'showing_top': 'Показано топ 15 из {total} игроков',
+        'found_players': 'Найдено {count} игрок(ов)',
+        'select_game': '🎮 Выберите игру',
+        'type_to_search': 'Начните вводить название игры...',
+        'no_games_found': 'Не найдено игр по запросу "{query}"',
     },
     'ua': {
         'not_verified': "❌ Спочатку прив'яжіть Steam! Використовуйте `/привязати_steam`",
@@ -129,7 +183,7 @@ TEXTS = {
         'cmd_link_desc': "Прив'язати профіль Steam",
         'cmd_link_param': 'Посилання на профіль Steam',
         'cmd_unlink_steam': 'відвязати_steam',
-        'cmd_unlink_desc': "Відв'язати Steam",
+        'cmd_unlink_desc': "Від'язати Steam",
         'cmd_find_teammates': 'знайти_тіммейтів',
         'cmd_find_desc': 'Знайти гравців',
         'cmd_find_param': 'Назва гри',
@@ -141,6 +195,33 @@ TEXTS = {
         'sort_alphabetical': '🔤 За алфавітом',
         'sort_total_hours': '📊 За загальним часом',
         'sort_your_hours': "⭐ За часом {user}",
+        'timeout_expired': '⏰ Це меню закінчилось',
+        'confirmation_expired': '⏰ Підтвердження закінчилось',
+        'privacy_note': '🔒 Приватність',
+        'privacy_text': 'Ваш профіль має бути **публічним** для синхронізації ігор',
+        'profile_info': 'Профіль',
+        'next_steps': '📊 Наступні кроки',
+        'next_steps_text': '• Використовуйте `/спільні_ігри` для пошуку ігор з друзями\n• Використовуйте `/знайти_тіммейтів` для пошуку гравців\n• Ваші ігри будуть синхронізуватись автоматично кожні 24г',
+        'profile_linked': "Steam Bot • Профіль прив'язано",
+        'no_profile': 'ℹ️ Профіль не знайдено',
+        'no_profile_text': "У вас немає прив'язаного профілю Steam.\n\nВикористовуйте `/привязати_steam` для прив'язки!",
+        'profile_unlinked_title': "✅ Профіль відв'язано",
+        'profile_unlinked_desc': "Ваш профіль Steam успішно відв'язано.",
+        'previous_profile': 'Попередній профіль',
+        'games_removed': '🎮 Ігри видалено',
+        'all_synced': 'Всі синхронізовані ігри',
+        'role_removed': '🎖️ Роль видалено',
+        'want_relink': "💡 Хочете прив'язати знову?",
+        'relink_text': "Ви можете перепривʼязати профіль в будь-який час використовуючи `/привязати_steam`",
+        'ranks': '🏅 Ранги',
+        'ranks_text': '🏆 500г+ • 💎 200г+ • ⭐ 100г+ • ✨ 50г+ • 🎯 10г+ • 🆕 <10г',
+        'requested_by': 'Запитав',
+        'note': 'ℹ️ Примітка',
+        'showing_top': 'Показано топ 15 з {total} гравців',
+        'found_players': 'Знайдено {count} гравець(ів)',
+        'select_game': '🎮 Оберіть гру',
+        'type_to_search': 'Почніть вводити назву гри...',
+        'no_games_found': 'Не знайдено ігор за запитом "{query}"',
     }
 }
 
@@ -158,7 +239,7 @@ db_pool: asyncpg.Pool = None
 # === Cache ===
 steam_cache = {}
 PAGINATION_VIEWS = {}
-server_langs = {}  # guild_id -> lang
+server_langs = {}
 
 # === Flask Keep-Alive ===
 app = Flask(__name__)
@@ -183,7 +264,6 @@ async def init_db():
     db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
     
     async with db_pool.acquire() as conn:
-        # Создаем таблицу games если её нет
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS games (
                 discord_id BIGINT,
@@ -195,7 +275,6 @@ async def init_db():
             )
         ''')
         
-        # Добавляем колонку icon_hash если её нет (для старых БД)
         try:
             await conn.execute('ALTER TABLE games ADD COLUMN IF NOT EXISTS icon_hash TEXT')
         except:
@@ -244,7 +323,6 @@ async def fetch_owned_games(steamid: str) -> dict:
             if resp.ok:
                 data = await resp.json()
                 games = data.get('response', {}).get('games', [])
-                # Сохраняем img_icon_url для каждой игры
                 result = {}
                 for g in games:
                     appid = g['appid']
@@ -264,7 +342,6 @@ async def has_verified_role(member: discord.Member) -> bool:
     return any(r.name.lower() == VERIFIED_ROLE.lower() for r in member.roles)
 
 async def ensure_verified_role(guild: discord.Guild) -> discord.Role:
-    """Создаёт роль 'steam verified' если её нет"""
     role = discord.utils.get(guild.roles, name=VERIFIED_ROLE)
     if not role:
         try:
@@ -324,6 +401,17 @@ async def get_games_by_name(game_name: str):
             game_name
         )
 
+async def search_games_by_user(discord_id: int, query: str, limit: int = 25):
+    """Поиск игр пользователя по частичному совпадению"""
+    async with db_pool.acquire() as conn:
+        return await conn.fetch('''
+            SELECT appid, game_name, icon_hash 
+            FROM games 
+            WHERE discord_id = $1 AND LOWER(game_name) LIKE LOWER($2)
+            ORDER BY playtime DESC
+            LIMIT $3
+        ''', discord_id, f'%{query}%', limit)
+
 async def set_server_lang(guild_id: int, lang: str):
     server_langs[guild_id] = lang
     async with db_pool.acquire() as conn:
@@ -336,11 +424,10 @@ async def set_server_lang(guild_id: int, lang: str):
 # === Language Select View ===
 class LanguageView(ui.View):
     def __init__(self, guild_id: int):
-        super().__init__(timeout=600)  # 10 минут для выбора языка
+        super().__init__(timeout=600)
         self.guild_id = guild_id
 
     async def on_timeout(self):
-        """Вызывается когда истекает timeout"""
         for item in self.children:
             item.disabled = True
         
@@ -376,7 +463,7 @@ class LanguageView(ui.View):
 # === Confirm View ===
 class ConfirmView(ui.View):
     def __init__(self, user_id: int, steam_url: str, profile_name: str, discord_name: str, guild_id: int):
-        super().__init__(timeout=300)  # 5 минут для подтверждения
+        super().__init__(timeout=300)
         self.user_id = user_id
         self.steam_url = steam_url
         self.profile_name = profile_name
@@ -387,17 +474,14 @@ class ConfirmView(ui.View):
         self.children[1].label = t(guild_id, 'no')
 
     async def on_timeout(self):
-        """Вызывается когда истекает timeout"""
-        # Отключаем все кнопки
         for item in self.children:
             item.disabled = True
         
-        # Пытаемся обновить сообщение
         try:
             if hasattr(self, 'message') and self.message:
                 embed = discord.Embed(
-                    title="⏰ Timeout",
-                    description="Confirmation expired. Please use `/link_steam` again.",
+                    title="⏰ " + t(self.guild_id, 'timeout_expired'),
+                    description=t(self.guild_id, 'confirmation_expired') + ". Please use `/link_steam` again.",
                     color=0x95a5a6
                 )
                 await self.message.edit(embed=embed, view=self)
@@ -426,9 +510,8 @@ class ConfirmView(ui.View):
             except discord.Forbidden:
                 pass
 
-        # Красивый embed для успешной привязки
         success_embed = Embed(
-            title="✅ Profile Linked Successfully!",
+            title="✅ " + t(self.guild_id, 'profile_linked'),
             description=(
                 f"**Steam Profile:** `{self.profile_name}`\n"
                 f"**Discord:** `{self.discord_name}`\n\n"
@@ -438,15 +521,11 @@ class ConfirmView(ui.View):
             color=0x00ff00
         )
         success_embed.add_field(
-            name="📊 Next Steps",
-            value=(
-                "• Use `/common_games` to find games with friends\n"
-                "• Use `/find_teammates` to find players for a game\n"
-                "• Your games will sync automatically every 24h"
-            ),
+            name=t(self.guild_id, 'next_steps'),
+            value=t(self.guild_id, 'next_steps_text'),
             inline=False
         )
-        success_embed.set_footer(text="Steam Bot • Profile linked")
+        success_embed.set_footer(text=t(self.guild_id, 'profile_linked'))
         success_embed.timestamp = datetime.utcnow()
         
         await interaction.followup.send(embed=success_embed, ephemeral=True)
@@ -462,35 +541,30 @@ class ConfirmView(ui.View):
 # === Games View ===
 class GamesView(ui.View):
     def __init__(self, ctx_user: discord.Member, initial_users: List[discord.Member], guild_id: int):
-        super().__init__(timeout=900)  # 15 минут = 900 секунд
+        super().__init__(timeout=900)  # 15 минут
         self.ctx_user = ctx_user
         self.users = initial_users[:6]
         self.pages: List[Embed] = []
         self.page_idx = 0
         self.message = None
         self.guild_id = guild_id
-        self.show_hours = False  # По умолчанию часы скрыты
-        self.sort_mode = 'name'  # 'name', 'total_hours', 'your_hours'
+        self.show_hours = False
+        self.sort_mode = 'name'
+        self.creation_time = datetime.utcnow()
         
-        # Добавляем кнопки управления
         self.update_buttons()
 
     def _get_game_icon_url(self, appid: int, icon_hash: str = '') -> str:
-        """Получает URL маленькой иконки игры как в библиотеке Steam"""
         if icon_hash:
             return f"https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/{appid}/{icon_hash}.jpg"
-        # Fallback на капсулу если нет icon_hash
         return f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/capsule_sm_120.jpg"
     
     def _get_game_store_url(self, appid: int) -> str:
-        """Получает URL страницы игры в Steam Store"""
         return f"https://store.steampowered.com/app/{appid}"
 
     def update_buttons(self):
-        """Обновляет кнопки в зависимости от состояния"""
         self.clear_items()
         
-        # Кнопка "назад"
         prev_btn = ui.Button(
             label="◀️",
             style=discord.ButtonStyle.secondary,
@@ -500,7 +574,6 @@ class GamesView(ui.View):
         prev_btn.callback = self.prev_page_callback
         self.add_item(prev_btn)
         
-        # Кнопка переключения отображения часов
         hours_btn = ui.Button(
             label="⏱️ Hours" if not self.show_hours else "⏱️ Hide",
             style=discord.ButtonStyle.primary if self.show_hours else discord.ButtonStyle.secondary,
@@ -509,7 +582,6 @@ class GamesView(ui.View):
         hours_btn.callback = self.toggle_hours_callback
         self.add_item(hours_btn)
         
-        # Кнопка сортировки
         sort_label = {
             'name': '🔤 A-Z',
             'total_hours': '📊 Total',
@@ -523,7 +595,6 @@ class GamesView(ui.View):
         sort_btn.callback = self.cycle_sort_callback
         self.add_item(sort_btn)
         
-        # Кнопка "вперед"
         next_btn = ui.Button(
             label="▶️",
             style=discord.ButtonStyle.secondary,
@@ -534,9 +605,8 @@ class GamesView(ui.View):
         self.add_item(next_btn)
 
     async def prev_page_callback(self, interaction: discord.Interaction):
-        """Переход на предыдущую страницу"""
         if interaction.user.id != self.ctx_user.id:
-            return await interaction.response.send_message("This is not your request.", ephemeral=True)
+            return await interaction.response.send_message(t(self.guild_id, 'not_your_request'), ephemeral=True)
         
         if self.page_idx > 0:
             self.page_idx -= 1
@@ -544,9 +614,8 @@ class GamesView(ui.View):
             await interaction.response.edit_message(embed=self.pages[self.page_idx], view=self)
 
     async def next_page_callback(self, interaction: discord.Interaction):
-        """Переход на следующую страницу"""
         if interaction.user.id != self.ctx_user.id:
-            return await interaction.response.send_message("This is not your request.", ephemeral=True)
+            return await interaction.response.send_message(t(self.guild_id, 'not_your_request'), ephemeral=True)
         
         if self.page_idx < len(self.pages) - 1:
             self.page_idx += 1
@@ -554,9 +623,8 @@ class GamesView(ui.View):
             await interaction.response.edit_message(embed=self.pages[self.page_idx], view=self)
 
     async def toggle_hours_callback(self, interaction: discord.Interaction):
-        """Переключает отображение часов"""
         if interaction.user.id != self.ctx_user.id:
-            return await interaction.response.send_message("This is not your request.", ephemeral=True)
+            return await interaction.response.send_message(t(self.guild_id, 'not_your_request'), ephemeral=True)
         
         self.show_hours = not self.show_hours
         self.update_buttons()
@@ -564,31 +632,30 @@ class GamesView(ui.View):
         await interaction.response.edit_message(embed=self.pages[self.page_idx], view=self)
 
     async def cycle_sort_callback(self, interaction: discord.Interaction):
-        """Циклически меняет режим сортировки"""
         if interaction.user.id != self.ctx_user.id:
-            return await interaction.response.send_message("This is not your request.", ephemeral=True)
+            return await interaction.response.send_message(t(self.guild_id, 'not_your_request'), ephemeral=True)
         
         sort_cycle = ['name', 'total_hours', 'your_hours']
         current_idx = sort_cycle.index(self.sort_mode)
         self.sort_mode = sort_cycle[(current_idx + 1) % len(sort_cycle)]
         
-        self.page_idx = 0  # Сбрасываем на первую страницу
+        self.page_idx = 0
         self.update_buttons()
         await self._build_pages()
         await interaction.response.edit_message(embed=self.pages[self.page_idx], view=self)
 
     async def on_timeout(self):
-        """Вызывается когда истекает timeout (15 минут)"""
+        """Удаляет сообщение после истечения 15 минут"""
         try:
             if self.message:
-                # Удаляем сообщение полностью
                 await self.message.delete()
                 
-                # Удаляем из кэша
                 if self.message.id in PAGINATION_VIEWS:
                     del PAGINATION_VIEWS[self.message.id]
                     
-                print(f"Deleted expired games view message {self.message.id}")
+                print(f"✓ Deleted expired games view message {self.message.id}")
+        except discord.NotFound:
+            print(f"Message {self.message.id} already deleted")
         except Exception as e:
             print(f"Error deleting expired message: {e}")
 
@@ -597,7 +664,6 @@ class GamesView(ui.View):
         sets = [set(data.get(u.id, {})) for u in self.users]
         common = set.intersection(*sets) if sets else set()
         
-        # Сортировка в зависимости от режима
         if self.sort_mode == 'name':
             sorted_list = sorted(common, key=lambda a: data[self.ctx_user.id][a]['name'].lower())
         elif self.sort_mode == 'total_hours':
@@ -606,7 +672,7 @@ class GamesView(ui.View):
                 key=lambda a: sum(data[u.id].get(a, {}).get('hrs', 0) for u in self.users),
                 reverse=True
             )
-        else:  # your_hours
+        else:
             sorted_list = sorted(
                 common,
                 key=lambda a: data[self.ctx_user.id].get(a, {}).get('hrs', 0),
@@ -621,7 +687,6 @@ class GamesView(ui.View):
             chunk = sorted_list[i:i+per_page]
             
             if chunk:
-                # Формируем description как список игр БЕЗ эмодзи
                 game_lines = []
                 for idx, appid in enumerate(chunk, 1):
                     game_data = data[self.ctx_user.id][appid]
@@ -629,11 +694,9 @@ class GamesView(ui.View):
                     icon_hash = game_data.get('icon', '')
                     game_url = self._get_game_store_url(appid)
                     
-                    # Кликабельное название игры с номером
                     game_link = f"`{idx}.` [{game_name}]({game_url})"
                     
                     if self.show_hours:
-                        # Показываем часы для всех игроков
                         hours_info = []
                         for u in self.users:
                             hrs = data[u.id].get(appid, {}).get('hrs', 0)
@@ -641,7 +704,6 @@ class GamesView(ui.View):
                         
                         game_lines.append(f"{game_link}\n     └ {' • '.join(hours_info)}")
                     else:
-                        # Просто название игры
                         game_lines.append(game_link)
                 
                 description = "\n".join(game_lines)
@@ -649,20 +711,16 @@ class GamesView(ui.View):
                 emb = Embed(
                     title=f"📚 {t(self.guild_id, 'common_games_title', count=total)}",
                     description=description,
-                    color=0x171a21  # Темный цвет Steam
+                    color=0x171a21
                 )
                 
-                # Устанавливаем thumbnail - иконку первой игры на странице
                 if chunk:
                     first_game_data = data[self.ctx_user.id][chunk[0]]
                     first_icon_hash = first_game_data.get('icon', '')
                     if first_icon_hash:
-                        icon_url = self._get_game_icon_url(chunk[0], first_icon_hash)
-                        # Используем увеличенную иконку для thumbnail
                         large_icon = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{chunk[0]}/header.jpg"
                         emb.set_thumbnail(url=large_icon)
                 
-                # Информация об участниках
                 participants_text = " • ".join(f"**{u.display_name}**" for u in self.users)
                 emb.add_field(
                     name=f"👥 {t(self.guild_id, 'participants')}",
@@ -670,7 +728,6 @@ class GamesView(ui.View):
                     inline=False
                 )
                 
-                # Информация о сортировке
                 if self.sort_mode == 'name':
                     sort_text = t(self.guild_id, 'sort_alphabetical')
                 elif self.sort_mode == 'total_hours':
@@ -684,7 +741,6 @@ class GamesView(ui.View):
                     inline=True
                 )
                 
-                # Статус отображения часов
                 hours_status = t(self.guild_id, 'hours_visible') if self.show_hours else t(self.guild_id, 'hours_hidden')
                 emb.add_field(
                     name="⏱️ Playtime",
@@ -695,16 +751,19 @@ class GamesView(ui.View):
                 page_num = len(self.pages) + 1
                 total_pages = max((total - 1) // per_page + 1, 1)
                 
+                # Вычисляем оставшееся время
+                elapsed = (datetime.utcnow() - self.creation_time).total_seconds()
+                remaining_minutes = max(0, int((900 - elapsed) / 60))
+                
                 emb.set_footer(
-                    text=f"{t(self.guild_id, 'page', current=page_num, total=total_pages)} • Expires in 15min",
+                    text=f"{t(self.guild_id, 'page', current=page_num, total=total_pages)} • Expires in {remaining_minutes}min",
                 )
                 emb.timestamp = datetime.utcnow()
                 
             else:
-                # Страница "нет общих игр"
                 emb = Embed(
                     title=f"📚 {t(self.guild_id, 'common_games_title', count=0)}",
-                    description=f"😔 {t(self.guild_id, 'no_common_games')}\n\n*Try linking more games or playing together!*",
+                    description=f"😢 {t(self.guild_id, 'no_common_games')}\n\n*Try linking more games or playing together!*",
                     color=0x5c7e8b
                 )
             
@@ -716,11 +775,27 @@ class GamesView(ui.View):
         if not self.pages:
             return await interaction.response.send_message(t(self.guild_id, 'no_common_games'), ephemeral=True)
 
-        self.update_buttons()  # Обновляем состояние кнопок перед показом
+        self.update_buttons()
         await interaction.response.send_message(embed=self.pages[0], view=self)
         self.message = await interaction.original_response()
         
         PAGINATION_VIEWS[self.message.id] = self
+
+# === Game Autocomplete ===
+async def game_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> List[app_commands.Choice[str]]:
+    """Автозаполнение для поиска игр"""
+    if not current:
+        return []
+    
+    games = await search_games_by_user(interaction.user.id, current, 25)
+    
+    return [
+        app_commands.Choice(name=game['game_name'][:100], value=game['game_name'])
+        for game in games
+    ]
 
 # === Events ===
 @bot.event
@@ -728,7 +803,6 @@ async def on_ready():
     await init_db()
     print(f'Logged in as {bot.user}')
     
-    # Регистрируем команды для каждого языка на каждом сервере
     for guild in bot.guilds:
         bot.tree.clear_commands(guild=guild)
         lang = server_langs.get(guild.id, 'en')
@@ -737,7 +811,6 @@ async def on_ready():
     await bot.tree.sync()
     print("Commands synced")
     
-    # Проверяем и запускаем задачи
     print("Starting background tasks...")
     
     try:
@@ -772,7 +845,6 @@ async def on_ready():
 
 @bot.event
 async def on_guild_join(guild: discord.Guild):
-    """Отправляем владельцу выбор языка при добавлении бота"""
     try:
         embed = Embed(
             title="🎮 Steam Bot",
@@ -783,14 +855,12 @@ async def on_guild_join(guild: discord.Guild):
         )
         view = LanguageView(guild.id)
         msg = await guild.owner.send(embed=embed, view=view)
-        view.message = msg  # Сохраняем ссылку для timeout
+        view.message = msg
     except discord.Forbidden:
         pass
 
 # === Dynamic Command Registration ===
 async def register_commands_for_guild(guild: discord.Guild, lang: str):
-    """Регистрирует команды на выбранном языке для гильдии"""
-    
     # link_steam
     @app_commands.command(name=t(guild.id, 'cmd_link_steam'), description=t(guild.id, 'cmd_link_desc'))
     @app_commands.describe(steam_url=t(guild.id, 'cmd_link_param'))
@@ -802,9 +872,10 @@ async def register_commands_for_guild(guild: discord.Guild, lang: str):
     async def unlink_steam_cmd(interaction: discord.Interaction):
         await unlink_steam_handler(interaction)
     
-    # find_teammates
+    # find_teammates с автозаполнением
     @app_commands.command(name=t(guild.id, 'cmd_find_teammates'), description=t(guild.id, 'cmd_find_desc'))
     @app_commands.describe(game=t(guild.id, 'cmd_find_param'))
+    @app_commands.autocomplete(game=game_autocomplete)
     async def find_teammates_cmd(interaction: discord.Interaction, game: str):
         await find_teammates_handler(interaction, game)
     
@@ -847,37 +918,31 @@ async def link_steam_handler(interaction: discord.Interaction, steam_url: str):
         except:
             return await interaction.followup.send(t(gid, 'profile_unavailable'), ephemeral=True)
 
-    # Пробуем разные паттерны для извлечения имени
     name_m = re.search(r'<title>Steam Community :: (.*?)</title>', html)
     if not name_m:
         name_m = re.search(r'<span class="actual_persona_name">(.*?)</span>', html)
     if not name_m:
         name_m = re.search(r'"personaname":"(.*?)"', html)
     if not name_m:
-        # Ищем в meta тегах
         name_m = re.search(r'<meta property="og:title" content="(.*?)"', html)
     
     profile_name = name_m.group(1) if name_m else interaction.user.display_name
-    # Декодируем HTML entities
     profile_name = profile_name.replace('&quot;', '"').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
     discord_name = interaction.user.display_name
     
-    # Пытаемся получить аватар Steam
     avatar_m = re.search(r'<link rel="image_src" href="(.*?)"', html)
     avatar_url = avatar_m.group(1) if avatar_m else None
     
-    # Пытаемся получить steamid для дополнительной информации
     ident = parse_steam_url(steam_url)
     steamid = await resolve_steamid(ident) if ident else None
     
-    # Предпросмотр количества игр
     game_count = 0
     if steamid:
         preview_games = await fetch_owned_games(steamid)
         game_count = len(preview_games)
     
     embed = Embed(
-        title="🔗 Link Steam Profile",
+        title="🔗 " + t(gid, 'confirm_link', name=profile_name, discord_name=discord_name),
         description=(
             f"**Steam Profile:** `{profile_name}`\n"
             f"**Discord User:** `{discord_name}`\n\n"
@@ -891,16 +956,16 @@ async def link_steam_handler(interaction: discord.Interaction, steam_url: str):
         embed.set_thumbnail(url=avatar_url)
     
     embed.add_field(
-        name="🔒 Privacy",
-        value="Your profile must be **public** to sync games",
+        name=t(gid, 'privacy_note'),
+        value=t(gid, 'privacy_text'),
         inline=False
     )
     
-    embed.set_footer(text=f"Profile: {steam_url[:50]}...")
+    embed.set_footer(text=f"{t(gid, 'profile_info')}: {steam_url[:50]}...")
     embed.timestamp = datetime.utcnow()
     view = ConfirmView(interaction.user.id, steam_url, profile_name, discord_name, gid)
     msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-    view.message = msg  # Сохраняем ссылку на сообщение для timeout
+    view.message = msg
 
 async def unlink_steam_handler(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
@@ -909,8 +974,8 @@ async def unlink_steam_handler(interaction: discord.Interaction):
     profile = await get_profile(interaction.user.id)
     if not profile:
         embed = Embed(
-            title="ℹ️ No Profile Found",
-            description="You don't have a Steam profile linked.\n\nUse `/link_steam` to link your profile!",
+            title=t(gid, 'no_profile'),
+            description=t(gid, 'no_profile_text'),
             color=0x95a5a6
         )
         return await interaction.followup.send(embed=embed, ephemeral=True)
@@ -925,20 +990,19 @@ async def unlink_steam_handler(interaction: discord.Interaction):
         except:
             pass
     
-    # Красивый embed для отвязки
     unlink_embed = Embed(
-        title="✅ Profile Unlinked",
+        title=t(gid, 'profile_unlinked_title'),
         description=(
-            f"Your Steam profile has been successfully unlinked.\n\n"
-            f"**Previous profile:** `{steam_url[:50]}...`\n"
-            f"🎮 **Games removed:** All synced games\n"
-            f"🎖️ **Role removed:** `{VERIFIED_ROLE}`"
+            f"{t(gid, 'profile_unlinked_desc')}\n\n"
+            f"**{t(gid, 'previous_profile')}:** `{steam_url[:50]}...`\n"
+            f"{t(gid, 'games_removed')}: {t(gid, 'all_synced')}\n"
+            f"{t(gid, 'role_removed')}: `{VERIFIED_ROLE}`"
         ),
         color=0xe74c3c
     )
     unlink_embed.add_field(
-        name="💡 Want to link again?",
-        value="You can re-link your profile anytime using `/link_steam`",
+        name=t(gid, 'want_relink'),
+        value=t(gid, 'relink_text'),
         inline=False
     )
     unlink_embed.set_footer(text="Steam Bot • Profile unlinked")
@@ -958,22 +1022,20 @@ async def find_teammates_handler(interaction: discord.Interaction, game: str):
     if not rows:
         return await interaction.followup.send(t(gid, 'no_players'), ephemeral=True)
     
-    # Получаем appid игры для картинки и ссылки
     async with db_pool.acquire() as conn:
         game_info = await conn.fetchrow(
-            'SELECT appid FROM games WHERE LOWER(game_name) = LOWER($1) LIMIT 1',
+            'SELECT appid, icon_hash FROM games WHERE LOWER(game_name) = LOWER($1) LIMIT 1',
             game
         )
     
     appid = game_info['appid'] if game_info else None
+    icon_hash = game_info['icon_hash'] if game_info else ''
     
-    # Формируем список игроков с эмодзи в зависимости от времени игры
     player_list = []
     for idx, row in enumerate(sorted(rows, key=lambda x: x['playtime'], reverse=True), 1):
         member = interaction.guild.get_member(row['discord_id'])
         if member:
             hrs = row['playtime']
-            # Ранги по времени игры
             if hrs > 500:
                 rank = "🏆"
             elif hrs > 200:
@@ -989,7 +1051,6 @@ async def find_teammates_handler(interaction: discord.Interaction, game: str):
             
             player_list.append(f"`#{idx}` {rank} {member.mention} **`{hrs}h`**")
     
-    # Формируем заголовок с кликабельной ссылкой
     if appid:
         game_url = f"https://store.steampowered.com/app/{appid}"
         title = f"🔍 [**{game}**]({game_url})"
@@ -998,24 +1059,28 @@ async def find_teammates_handler(interaction: discord.Interaction, game: str):
     
     embed = Embed(
         title="Find Teammates",
-        description=f"{title}\n\n*Found {len(player_list)} player(s)*\n\n" + "\n".join(player_list[:15]),
+        description=f"{title}\n\n*{t(gid, 'found_players', count=len(player_list))}*\n\n" + "\n".join(player_list[:15]),
         color=0x171a21
     )
     
-    # Легенда рангов
+    # Добавляем картинку игры
+    if appid and icon_hash:
+        header_url = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"
+        embed.set_thumbnail(url=header_url)
+    
     embed.add_field(
-        name="🏅 Ranks",
-        value="🏆 500h+ • 💎 200h+ • ⭐ 100h+ • ✨ 50h+ • 🎯 10h+ • 🆕 <10h",
+        name=t(gid, 'ranks'),
+        value=t(gid, 'ranks_text'),
         inline=False
     )
     
-    embed.set_footer(text=f"Requested by {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
+    embed.set_footer(text=f"{t(gid, 'requested_by')} {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
     embed.timestamp = datetime.utcnow()
     
     if len(player_list) > 15:
         embed.add_field(
-            name="ℹ️ Note",
-            value=f"Showing top 15 of {len(player_list)} players",
+            name=t(gid, 'note'),
+            value=t(gid, 'showing_top', total=len(player_list)),
             inline=False
         )
     
@@ -1043,7 +1108,6 @@ async def set_language(interaction: discord.Interaction, language: str):
     await set_server_lang(interaction.guild_id, language)
     await interaction.response.send_message(TEXTS[language]['lang_set'], ephemeral=True)
     
-    # Перерегистрируем команды с новым языком
     bot.tree.clear_commands(guild=interaction.guild)
     await register_commands_for_guild(interaction.guild, language)
     await interaction.followup.send("✅ Commands updated to new language!", ephemeral=True)
@@ -1070,11 +1134,10 @@ async def discount_game_check():
     if not ch:
         return
     
-    # URL для игр со скидкой 100%
     url = 'https://store.steampowered.com/search/?maxprice=free&specials=1'
     
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     }
     
     async with aiohttp.ClientSession(headers=headers) as session:
@@ -1089,9 +1152,7 @@ async def discount_game_check():
     async with db_pool.acquire() as conn:
         existing = {r['game_link'] for r in await conn.fetch('SELECT game_link FROM sent_sales')}
         
-        # Ищем игры в результатах поиска
         for item in soup.select('a.search_result_row')[:15]:
-            # Получаем название игры
             title_elem = item.select_one('.title')
             if not title_elem:
                 continue
@@ -1102,19 +1163,16 @@ async def discount_game_check():
             if not link or link in existing:
                 continue
             
-            # Проверяем что игра действительно со скидкой 100%
             discount_pct = item.select_one('.discount_pct')
             original_price = item.select_one('.discount_original_price')
             final_price = item.select_one('.discount_final_price')
             
-            # Должна быть скидка и финальная цена "Free"
             if not discount_pct or not final_price:
                 continue
                 
             discount_text = discount_pct.text.strip()
             final_price_text = final_price.text.strip()
             
-            # Проверяем что это -100% и Free
             if '-100%' in discount_text and ('Free' in final_price_text or 'Бесплатно' in final_price_text):
                 print(f"Found 100% discount game: {title}")
                 
@@ -1130,14 +1188,13 @@ async def discount_game_check():
                 )
                 embed.set_footer(text="Steam 100% Discount")
                 
-                # Пробуем получить изображение игры
                 img = item.select_one('img')
                 if img and img.get('src'):
                     embed.set_thumbnail(url=img['src'])
                 
                 try:
                     await ch.send(embed=embed)
-                    await asyncio.sleep(2)  # Задержка между отправками
+                    await asyncio.sleep(2)
                 except Exception as e:
                     print(f"Error sending discount message: {e}")
 
@@ -1148,10 +1205,8 @@ async def cleanup_old_views():
     to_remove = []
     
     for msg_id, view in PAGINATION_VIEWS.items():
-        # Проверяем, не истек ли таймаут view
         if hasattr(view, 'message') and view.message:
             try:
-                # Если view все еще активен, пропускаем
                 if not view.is_finished():
                     continue
                 to_remove.append(msg_id)
@@ -1163,6 +1218,8 @@ async def cleanup_old_views():
     
     if to_remove:
         print(f"Cleaned up {len(to_remove)} old pagination views")
+
+@tasks.loop(hours=6)
 async def epic_free_check():
     ch = bot.get_channel(EPIC_CHANNEL_ID)
     if not ch:
