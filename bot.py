@@ -307,8 +307,24 @@ async def set_server_lang(guild_id: int, lang: str):
 # === Language Select View ===
 class LanguageView(ui.View):
     def __init__(self, guild_id: int):
-        super().__init__(timeout=300)
+        super().__init__(timeout=600)  # 10 минут для выбора языка
         self.guild_id = guild_id
+
+    async def on_timeout(self):
+        """Вызывается когда истекает timeout"""
+        for item in self.children:
+            item.disabled = True
+        
+        try:
+            if hasattr(self, 'message') and self.message:
+                embed = discord.Embed(
+                    title="⏰ Timeout",
+                    description="Language selection expired. Use `/set_language` to change it later.",
+                    color=0x95a5a6
+                )
+                await self.message.edit(embed=embed, view=self)
+        except:
+            pass
 
     @ui.button(label='🇬🇧 English', style=discord.ButtonStyle.secondary)
     async def english(self, interaction: discord.Interaction, button: ui.Button):
@@ -331,7 +347,7 @@ class LanguageView(ui.View):
 # === Confirm View ===
 class ConfirmView(ui.View):
     def __init__(self, user_id: int, steam_url: str, profile_name: str, discord_name: str, guild_id: int):
-        super().__init__(timeout=60)
+        super().__init__(timeout=300)  # 5 минут для подтверждения
         self.user_id = user_id
         self.steam_url = steam_url
         self.profile_name = profile_name
@@ -340,6 +356,24 @@ class ConfirmView(ui.View):
         
         self.children[0].label = t(guild_id, 'yes')
         self.children[1].label = t(guild_id, 'no')
+
+    async def on_timeout(self):
+        """Вызывается когда истекает timeout"""
+        # Отключаем все кнопки
+        for item in self.children:
+            item.disabled = True
+        
+        # Пытаемся обновить сообщение
+        try:
+            if hasattr(self, 'message') and self.message:
+                embed = discord.Embed(
+                    title="⏰ Timeout",
+                    description="Confirmation expired. Please use `/link_steam` again.",
+                    color=0x95a5a6
+                )
+                await self.message.edit(embed=embed, view=self)
+        except:
+            pass
 
     @ui.button(label='Yes', style=discord.ButtonStyle.green)
     async def confirm(self, interaction: discord.Interaction, button: ui.Button):
@@ -399,7 +433,7 @@ class ConfirmView(ui.View):
 # === Games View ===
 class GamesView(ui.View):
     def __init__(self, ctx_user: discord.Member, initial_users: List[discord.Member], guild_id: int):
-        super().__init__(timeout=120)
+        super().__init__(timeout=900)  # 15 минут = 900 секунд
         self.ctx_user = ctx_user
         self.users = initial_users[:6]
         self.pages: List[Embed] = []
@@ -430,7 +464,7 @@ class GamesView(ui.View):
             style=discord.ButtonStyle.primary if self.show_hours else discord.ButtonStyle.secondary,
             custom_id="toggle_hours"
         )
-        hours_btn.callback = self.toggle_hours
+        hours_btn.callback = self.toggle_hours_callback
         self.add_item(hours_btn)
         
         # Кнопка сортировки
@@ -444,10 +478,10 @@ class GamesView(ui.View):
             style=discord.ButtonStyle.secondary,
             custom_id="sort"
         )
-        sort_btn.callback = self.cycle_sort
+        sort_btn.callback = self.cycle_sort_callback
         self.add_item(sort_btn)
 
-    async def toggle_hours(self, interaction: discord.Interaction):
+    async def toggle_hours_callback(self, interaction: discord.Interaction):
         """Переключает отображение часов"""
         if interaction.user.id != self.ctx_user.id:
             return await interaction.response.send_message("This is not your request.", ephemeral=True)
@@ -457,7 +491,7 @@ class GamesView(ui.View):
         await self._build_pages()
         await interaction.response.edit_message(embed=self.pages[self.page_idx], view=self)
 
-    async def cycle_sort(self, interaction: discord.Interaction):
+    async def cycle_sort_callback(self, interaction: discord.Interaction):
         """Циклически меняет режим сортировки"""
         if interaction.user.id != self.ctx_user.id:
             return await interaction.response.send_message("This is not your request.", ephemeral=True)
@@ -470,6 +504,34 @@ class GamesView(ui.View):
         self.update_buttons()
         await self._build_pages()
         await interaction.response.edit_message(embed=self.pages[self.page_idx], view=self)
+
+    async def on_timeout(self):
+        """Вызывается когда истекает timeout (15 минут)"""
+        try:
+            if self.message:
+                # Убираем кнопки и добавляем сообщение об истечении времени
+                embed = self.pages[self.page_idx] if self.pages else discord.Embed(
+                    title="⏰ Session Expired",
+                    description="This view has expired. Use `/common_games` again to create a new one.",
+                    color=0x95a5a6
+                )
+                embed.set_footer(text="Session expired after 15 minutes")
+                
+                # Очищаем view
+                self.clear_items()
+                await self.message.edit(embed=embed, view=None)
+                
+                # Удаляем реакции
+                try:
+                    await self.message.clear_reactions()
+                except:
+                    pass
+                
+                # Удаляем из кэша
+                if self.message.id in PAGINATION_VIEWS:
+                    del PAGINATION_VIEWS[self.message.id]
+        except Exception as e:
+            print(f"Error in on_timeout: {e}")
 
     async def _build_pages(self):
         data = await get_all_games()
@@ -505,7 +567,6 @@ class GamesView(ui.View):
                 for appid in chunk:
                     game_name = data[self.ctx_user.id][appid]['name']
                     game_url = self._get_game_store_url(appid)
-                    icon_url = self._get_game_icon_url(appid)
                     
                     # Кликабельное название игры
                     game_link = f"[{game_name}]({game_url})"
@@ -564,7 +625,7 @@ class GamesView(ui.View):
                 total_pages = max((total - 1) // per_page + 1, 1)
                 
                 emb.set_footer(
-                    text=f"{t(self.guild_id, 'page', current=page_num, total=total_pages)} • Use reactions to navigate",
+                    text=f"{t(self.guild_id, 'page', current=page_num, total=total_pages)} • Expires in 15min",
                 )
                 emb.timestamp = datetime.utcnow()
                 
@@ -614,6 +675,8 @@ async def on_ready():
         discount_game_check.start()
     if not epic_free_check.is_running():
         epic_free_check.start()
+    if not cleanup_old_views.is_running():
+        cleanup_old_views.start()
 
 @bot.event
 async def on_guild_join(guild: discord.Guild):
@@ -627,7 +690,8 @@ async def on_guild_join(guild: discord.Guild):
             color=0x1a9fff
         )
         view = LanguageView(guild.id)
-        await guild.owner.send(embed=embed, view=view)
+        msg = await guild.owner.send(embed=embed, view=view)
+        view.message = msg  # Сохраняем ссылку для timeout
     except discord.Forbidden:
         pass
 
@@ -767,7 +831,8 @@ async def link_steam_handler(interaction: discord.Interaction, steam_url: str):
     embed.set_footer(text=f"Profile: {steam_url[:50]}...")
     embed.timestamp = datetime.utcnow()
     view = ConfirmView(interaction.user.id, steam_url, profile_name, discord_name, gid)
-    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+    msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+    view.message = msg  # Сохраняем ссылку на сообщение для timeout
 
 async def unlink_steam_handler(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
@@ -1013,7 +1078,28 @@ async def discount_game_check():
                 except Exception as e:
                     print(f"Error sending discount message: {e}")
 
-@tasks.loop(hours=24)
+@tasks.loop(hours=1)
+async def cleanup_old_views():
+    """Очищает устаревшие views из кэша"""
+    current_time = datetime.utcnow()
+    to_remove = []
+    
+    for msg_id, view in PAGINATION_VIEWS.items():
+        # Проверяем, не истек ли таймаут view
+        if hasattr(view, 'message') and view.message:
+            try:
+                # Если view все еще активен, пропускаем
+                if not view.is_finished():
+                    continue
+                to_remove.append(msg_id)
+            except:
+                to_remove.append(msg_id)
+    
+    for msg_id in to_remove:
+        PAGINATION_VIEWS.pop(msg_id, None)
+    
+    if to_remove:
+        print(f"Cleaned up {len(to_remove)} old pagination views")
 async def epic_free_check():
     ch = bot.get_channel(EPIC_CHANNEL_ID)
     if not ch:
