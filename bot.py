@@ -183,6 +183,24 @@ async def init_db():
     db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
     
     async with db_pool.acquire() as conn:
+        # Создаем таблицу games если её нет
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS games (
+                discord_id BIGINT,
+                appid INTEGER,
+                game_name TEXT,
+                playtime INTEGER,
+                icon_hash TEXT,
+                PRIMARY KEY (discord_id, appid)
+            )
+        ''')
+        
+        # Добавляем колонку icon_hash если её нет (для старых БД)
+        try:
+            await conn.execute('ALTER TABLE games ADD COLUMN IF NOT EXISTS icon_hash TEXT')
+        except:
+            pass
+        
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS server_settings (
                 guild_id BIGINT PRIMARY KEY,
@@ -193,7 +211,7 @@ async def init_db():
         for row in rows:
             server_langs[row['guild_id']] = row['language']
     
-    print("Database pool created")
+    print("✓ Database pool created and tables verified")
 
 async def resolve_steamid(identifier: str) -> str | None:
     if identifier.isdigit():
@@ -226,7 +244,14 @@ async def fetch_owned_games(steamid: str) -> dict:
             if resp.ok:
                 data = await resp.json()
                 games = data.get('response', {}).get('games', [])
-                result = {g['appid']: (g['name'], g['playtime_forever'] // 60) for g in games}
+                # Сохраняем img_icon_url для каждой игры
+                result = {}
+                for g in games:
+                    appid = g['appid']
+                    name = g['name']
+                    hours = g['playtime_forever'] // 60
+                    icon_hash = g.get('img_icon_url', '')
+                    result[appid] = (name, hours, icon_hash)
                 steam_cache[steamid] = (now, result)
                 return result
     return {}
@@ -275,17 +300,21 @@ async def save_games(discord_id: int, games: dict):
         await conn.execute('DELETE FROM games WHERE discord_id = $1', discord_id)
         if games:
             await conn.executemany('''
-                INSERT INTO games (discord_id, appid, game_name, playtime)
-                VALUES ($1, $2, $3, $4)
-            ''', [(discord_id, appid, name, hrs) for appid, (name, hrs) in games.items()])
+                INSERT INTO games (discord_id, appid, game_name, playtime, icon_hash)
+                VALUES ($1, $2, $3, $4, $5)
+            ''', [(discord_id, appid, name, hrs, icon) for appid, (name, hrs, icon) in games.items()])
 
 async def get_all_games() -> dict:
     async with db_pool.acquire() as conn:
-        rows = await conn.fetch('SELECT discord_id, appid, game_name, playtime FROM games')
+        rows = await conn.fetch('SELECT discord_id, appid, game_name, playtime, icon_hash FROM games')
         data = {}
         for row in rows:
             uid = row['discord_id']
-            data.setdefault(uid, {})[row['appid']] = {'name': row['game_name'], 'hrs': row['playtime']}
+            data.setdefault(uid, {})[row['appid']] = {
+                'name': row['game_name'], 
+                'hrs': row['playtime'],
+                'icon': row.get('icon_hash', '')
+            }
         return data
 
 async def get_games_by_name(game_name: str):
@@ -446,9 +475,12 @@ class GamesView(ui.View):
         # Добавляем кнопки управления
         self.update_buttons()
 
-    def _get_game_icon_url(self, appid: int) -> str:
+    def _get_game_icon_url(self, appid: int, icon_hash: str = '') -> str:
         """Получает URL маленькой иконки игры как в библиотеке Steam"""
-        return f"https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/{appid}/{appid}_32x32.jpg"
+        if icon_hash:
+            return f"https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/{appid}/{icon_hash}.jpg"
+        # Fallback на капсулу если нет icon_hash
+        return f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/capsule_sm_120.jpg"
     
     def _get_game_store_url(self, appid: int) -> str:
         """Получает URL страницы игры в Steam Store"""
@@ -592,7 +624,9 @@ class GamesView(ui.View):
                 # Формируем description как список игр с иконками
                 game_lines = []
                 for appid in chunk:
-                    game_name = data[self.ctx_user.id][appid]['name']
+                    game_data = data[self.ctx_user.id][appid]
+                    game_name = game_data['name']
+                    icon_hash = game_data.get('icon', '')
                     game_url = self._get_game_store_url(appid)
                     
                     # Кликабельное название игры
@@ -693,14 +727,38 @@ async def on_ready():
     await bot.tree.sync()
     print("Commands synced")
     
-    if not daily_link_check.is_running():
-        daily_link_check.start()
-    if not discount_game_check.is_running():
-        discount_game_check.start()
-    if not epic_free_check.is_running():
-        epic_free_check.start()
-    if not cleanup_old_views.is_running():
-        cleanup_old_views.start()
+    # Проверяем и запускаем задачи
+    print("Starting background tasks...")
+    
+    try:
+        if not daily_link_check.is_running():
+            daily_link_check.start()
+            print("✓ daily_link_check started")
+    except Exception as e:
+        print(f"✗ Error starting daily_link_check: {e}")
+    
+    try:
+        if not discount_game_check.is_running():
+            discount_game_check.start()
+            print("✓ discount_game_check started")
+    except Exception as e:
+        print(f"✗ Error starting discount_game_check: {e}")
+    
+    try:
+        if not cleanup_old_views.is_running():
+            cleanup_old_views.start()
+            print("✓ cleanup_old_views started")
+    except Exception as e:
+        print(f"✗ Error starting cleanup_old_views: {e}")
+    
+    try:
+        if not epic_free_check.is_running():
+            epic_free_check.start()
+            print("✓ epic_free_check started")
+    except Exception as e:
+        print(f"✗ Error starting epic_free_check: {e}")
+    
+    print("All background tasks initialized")
 
 @bot.event
 async def on_guild_join(guild: discord.Guild):
