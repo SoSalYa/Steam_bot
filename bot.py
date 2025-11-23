@@ -447,8 +447,8 @@ class GamesView(ui.View):
         self.update_buttons()
 
     def _get_game_icon_url(self, appid: int) -> str:
-        """Получает URL маленькой иконки игры (32x32) как в библиотеке Steam"""
-        return f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/capsule_sm_120.jpg"
+        """Получает URL маленькой иконки игры как в библиотеке Steam"""
+        return f"https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/{appid}/{appid}_32x32.jpg"
     
     def _get_game_store_url(self, appid: int) -> str:
         """Получает URL страницы игры в Steam Store"""
@@ -458,9 +458,19 @@ class GamesView(ui.View):
         """Обновляет кнопки в зависимости от состояния"""
         self.clear_items()
         
+        # Кнопка "назад"
+        prev_btn = ui.Button(
+            label="◀️",
+            style=discord.ButtonStyle.secondary,
+            disabled=(self.page_idx == 0 or len(self.pages) <= 1),
+            custom_id="prev"
+        )
+        prev_btn.callback = self.prev_page_callback
+        self.add_item(prev_btn)
+        
         # Кнопка переключения отображения часов
         hours_btn = ui.Button(
-            label="⏱️ Hours" if not self.show_hours else "⏱️ Hide Hours",
+            label="⏱️ Hours" if not self.show_hours else "⏱️ Hide",
             style=discord.ButtonStyle.primary if self.show_hours else discord.ButtonStyle.secondary,
             custom_id="toggle_hours"
         )
@@ -469,9 +479,9 @@ class GamesView(ui.View):
         
         # Кнопка сортировки
         sort_label = {
-            'name': '🔤 Sort: A-Z',
-            'total_hours': '📊 Sort: Total Hours',
-            'your_hours': '⭐ Sort: Your Hours'
+            'name': '🔤 A-Z',
+            'total_hours': '📊 Total',
+            'your_hours': '⭐ Yours'
         }
         sort_btn = ui.Button(
             label=sort_label[self.sort_mode],
@@ -480,6 +490,36 @@ class GamesView(ui.View):
         )
         sort_btn.callback = self.cycle_sort_callback
         self.add_item(sort_btn)
+        
+        # Кнопка "вперед"
+        next_btn = ui.Button(
+            label="▶️",
+            style=discord.ButtonStyle.secondary,
+            disabled=(self.page_idx >= len(self.pages) - 1 or len(self.pages) <= 1),
+            custom_id="next"
+        )
+        next_btn.callback = self.next_page_callback
+        self.add_item(next_btn)
+
+    async def prev_page_callback(self, interaction: discord.Interaction):
+        """Переход на предыдущую страницу"""
+        if interaction.user.id != self.ctx_user.id:
+            return await interaction.response.send_message("This is not your request.", ephemeral=True)
+        
+        if self.page_idx > 0:
+            self.page_idx -= 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.pages[self.page_idx], view=self)
+
+    async def next_page_callback(self, interaction: discord.Interaction):
+        """Переход на следующую страницу"""
+        if interaction.user.id != self.ctx_user.id:
+            return await interaction.response.send_message("This is not your request.", ephemeral=True)
+        
+        if self.page_idx < len(self.pages) - 1:
+            self.page_idx += 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.pages[self.page_idx], view=self)
 
     async def toggle_hours_callback(self, interaction: discord.Interaction):
         """Переключает отображение часов"""
@@ -509,29 +549,16 @@ class GamesView(ui.View):
         """Вызывается когда истекает timeout (15 минут)"""
         try:
             if self.message:
-                # Убираем кнопки и добавляем сообщение об истечении времени
-                embed = self.pages[self.page_idx] if self.pages else discord.Embed(
-                    title="⏰ Session Expired",
-                    description="This view has expired. Use `/common_games` again to create a new one.",
-                    color=0x95a5a6
-                )
-                embed.set_footer(text="Session expired after 15 minutes")
-                
-                # Очищаем view
-                self.clear_items()
-                await self.message.edit(embed=embed, view=None)
-                
-                # Удаляем реакции
-                try:
-                    await self.message.clear_reactions()
-                except:
-                    pass
+                # Удаляем сообщение полностью
+                await self.message.delete()
                 
                 # Удаляем из кэша
                 if self.message.id in PAGINATION_VIEWS:
                     del PAGINATION_VIEWS[self.message.id]
+                    
+                print(f"Deleted expired games view message {self.message.id}")
         except Exception as e:
-            print(f"Error in on_timeout: {e}")
+            print(f"Error deleting expired message: {e}")
 
     async def _build_pages(self):
         data = await get_all_games()
@@ -562,7 +589,7 @@ class GamesView(ui.View):
             chunk = sorted_list[i:i+per_page]
             
             if chunk:
-                # Формируем description как список игр
+                # Формируем description как список игр с иконками
                 game_lines = []
                 for appid in chunk:
                     game_name = data[self.ctx_user.id][appid]['name']
@@ -645,12 +672,9 @@ class GamesView(ui.View):
         if not self.pages:
             return await interaction.response.send_message(t(self.guild_id, 'no_common_games'), ephemeral=True)
 
+        self.update_buttons()  # Обновляем состояние кнопок перед показом
         await interaction.response.send_message(embed=self.pages[0], view=self)
         self.message = await interaction.original_response()
-        
-        if len(self.pages) > 1:
-            await self.message.add_reaction("⬅️")
-            await self.message.add_reaction("➡️")
         
         PAGINATION_VIEWS[self.message.id] = self
 
@@ -694,30 +718,6 @@ async def on_guild_join(guild: discord.Guild):
         view.message = msg  # Сохраняем ссылку для timeout
     except discord.Forbidden:
         pass
-
-@bot.event
-async def on_reaction_add(reaction, user):
-    if user.bot:
-        return
-    view = PAGINATION_VIEWS.get(reaction.message.id)
-    if not view:
-        return
-    
-    # Проверяем что это запрос от правильного пользователя
-    if user.id != view.ctx_user.id:
-        await reaction.message.remove_reaction(reaction.emoji, user)
-        return
-    
-    if reaction.emoji == "➡️" and view.page_idx < len(view.pages) - 1:
-        view.page_idx += 1
-    elif reaction.emoji == "⬅️" and view.page_idx > 0:
-        view.page_idx -= 1
-    else:
-        await reaction.message.remove_reaction(reaction.emoji, user)
-        return
-    
-    await reaction.message.edit(embed=view.pages[view.page_idx], view=view)
-    await reaction.message.remove_reaction(reaction.emoji, user)
 
 # === Dynamic Command Registration ===
 async def register_commands_for_guild(guild: discord.Guild, lang: str):
@@ -933,11 +933,6 @@ async def find_teammates_handler(interaction: discord.Interaction, game: str):
         description=f"{title}\n\n*Found {len(player_list)} player(s)*\n\n" + "\n".join(player_list[:15]),
         color=0x171a21
     )
-    
-    # Добавляем маленькую иконку игры как thumbnail
-    if appid:
-        game_icon = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/capsule_sm_120.jpg"
-        embed.set_thumbnail(url=game_icon)
     
     # Легенда рангов
     embed.add_field(
