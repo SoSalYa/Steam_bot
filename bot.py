@@ -348,10 +348,30 @@ class ConfirmView(ui.View):
             except discord.Forbidden:
                 pass
 
-        await interaction.followup.send(
-            t(self.guild_id, 'link_success', name=self.profile_name, count=len(games)),
-            ephemeral=True
+        # Красивый embed для успешной привязки
+        success_embed = Embed(
+            title="✅ Profile Linked Successfully!",
+            description=(
+                f"**Steam Profile:** `{self.profile_name}`\n"
+                f"**Discord:** `{self.discord_name}`\n\n"
+                f"🎮 **Games synced:** `{len(games)}`\n"
+                f"🎖️ **Role assigned:** `{role.name if role else 'N/A'}`"
+            ),
+            color=0x00ff00
         )
+        success_embed.add_field(
+            name="📊 Next Steps",
+            value=(
+                "• Use `/common_games` to find games with friends\n"
+                "• Use `/find_teammates` to find players for a game\n"
+                "• Your games will sync automatically every 24h"
+            ),
+            inline=False
+        )
+        success_embed.set_footer(text="Steam Bot • Profile linked")
+        success_embed.timestamp = datetime.utcnow()
+        
+        await interaction.followup.send(embed=success_embed, ephemeral=True)
         self.stop()
 
     @ui.button(label='No', style=discord.ButtonStyle.red)
@@ -372,6 +392,14 @@ class GamesView(ui.View):
         self.message = None
         self.guild_id = guild_id
 
+    def _get_game_image_url(self, appid: int) -> str:
+        """Получает URL миниатюры игры из Steam"""
+        return f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/capsule_231x87.jpg"
+    
+    def _get_game_store_url(self, appid: int) -> str:
+        """Получает URL страницы игры в Steam Store"""
+        return f"https://store.steampowered.com/app/{appid}"
+
     async def _build_pages(self):
         data = await get_all_games()
         sets = [set(data.get(u.id, {})) for u in self.users]
@@ -380,33 +408,74 @@ class GamesView(ui.View):
         sorted_list = sorted(common, key=lambda a: data[self.ctx_user.id][a]['name'].lower())
         
         self.pages.clear()
-        per_page = 10
+        per_page = 5  # Уменьшили до 5 для лучшей читаемости
         total = len(sorted_list)
         
         for i in range(0, max(total, 1), per_page):
             chunk = sorted_list[i:i+per_page]
-            if chunk:
-                desc = "\n".join(
-                    f"🎮 **{data[self.ctx_user.id][appid]['name']}**\n" +
-                    "　　" + " | ".join(f"`{u.display_name}`: {data[u.id].get(appid, {}).get('hrs', 0)}h" for u in self.users)
-                    for appid in chunk
-                )
-            else:
-                desc = t(self.guild_id, 'no_common_games')
             
-            emb = Embed(
-                title=f"🎮 {t(self.guild_id, 'common_games_title', count=total)}",
-                description=desc,
-                color=0x1a9fff
-            )
-            emb.add_field(
-                name=f"👥 {t(self.guild_id, 'participants')}",
-                value=" • ".join(f"`{u.display_name}`" for u in self.users),
-                inline=False
-            )
-            page_num = len(self.pages) + 1
-            total_pages = max((total - 1) // per_page + 1, 1)
-            emb.set_footer(text=t(self.guild_id, 'page', current=page_num, total=total_pages))
+            if chunk:
+                emb = Embed(
+                    title=f"🎮 {t(self.guild_id, 'common_games_title', count=total)}",
+                    description=f"*{t(self.guild_id, 'participants')}:* " + ", ".join(f"**{u.display_name}**" for u in self.users),
+                    color=0x1b2838  # Темный цвет Steam
+                )
+                
+                for appid in chunk:
+                    game_name = data[self.ctx_user.id][appid]['name']
+                    game_url = self._get_game_store_url(appid)
+                    
+                    # Собираем информацию о времени игры для каждого пользователя
+                    playtime_info = []
+                    total_hours = 0
+                    for u in self.users:
+                        hrs = data[u.id].get(appid, {}).get('hrs', 0)
+                        total_hours += hrs
+                        # Используем эмодзи для визуального представления
+                        if hrs > 100:
+                            icon = "🔥"
+                        elif hrs > 50:
+                            icon = "⭐"
+                        elif hrs > 10:
+                            icon = "✨"
+                        else:
+                            icon = "🎯"
+                        playtime_info.append(f"{icon} **{u.display_name}**: `{hrs}h`")
+                    
+                    # Формируем поле для игры
+                    field_value = "\n".join(playtime_info)
+                    field_value += f"\n\n📊 **Total**: `{total_hours}h` | [🔗 View in Steam]({game_url})"
+                    
+                    emb.add_field(
+                        name=f"🎮 {game_name}",
+                        value=field_value,
+                        inline=False
+                    )
+                
+                # Устанавливаем thumbnail - картинку первой игры на странице
+                if chunk:
+                    first_game_img = self._get_game_image_url(chunk[0])
+                    emb.set_thumbnail(url=first_game_img)
+                
+                page_num = len(self.pages) + 1
+                total_pages = max((total - 1) // per_page + 1, 1)
+                
+                # Красивый футер с навигацией
+                emb.set_footer(
+                    text=f"📄 {t(self.guild_id, 'page', current=page_num, total=total_pages)} • Use ⬅️ ➡️ to navigate",
+                    icon_url="https://cdn.cloudflare.com/ajax/libs/flag-icon-css/3.5.0/flags/4x3/steam.svg"
+                )
+                emb.timestamp = datetime.utcnow()
+                
+            else:
+                # Страница "нет общих игр"
+                emb = Embed(
+                    title="🎮 " + t(self.guild_id, 'common_games_title', count=0),
+                    description=f"😔 {t(self.guild_id, 'no_common_games')}\n\n*Try linking more games or playing together!*",
+                    color=0x5c7e8b
+                )
+                emb.set_thumbnail(url="https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/avatars/b5/b5bd56c1aa4644a474a2e4972be27ef9e82e517e_full.jpg")
+            
             self.pages.append(emb)
 
     async def render(self, interaction: discord.Interaction):
@@ -540,15 +609,57 @@ async def link_steam_handler(interaction: discord.Interaction, steam_url: str):
         except:
             return await interaction.followup.send(t(gid, 'profile_unavailable'), ephemeral=True)
 
-    name_m = re.search(r'<title>(.*?) on Steam</title>', html)
-    profile_name = name_m.group(1) if name_m else 'Unknown'
+    # Пробуем разные паттерны для извлечения имени
+    name_m = re.search(r'<title>Steam Community :: (.*?)</title>', html)
+    if not name_m:
+        name_m = re.search(r'<span class="actual_persona_name">(.*?)</span>', html)
+    if not name_m:
+        name_m = re.search(r'"personaname":"(.*?)"', html)
+    if not name_m:
+        # Ищем в meta тегах
+        name_m = re.search(r'<meta property="og:title" content="(.*?)"', html)
+    
+    profile_name = name_m.group(1) if name_m else interaction.user.display_name
+    # Декодируем HTML entities
+    profile_name = profile_name.replace('&quot;', '"').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
     discord_name = interaction.user.display_name
     
+    # Пытаемся получить аватар Steam
+    avatar_m = re.search(r'<link rel="image_src" href="(.*?)"', html)
+    avatar_url = avatar_m.group(1) if avatar_m else None
+    
+    # Пытаемся получить steamid для дополнительной информации
+    ident = parse_steam_url(steam_url)
+    steamid = await resolve_steamid(ident) if ident else None
+    
+    # Предпросмотр количества игр
+    game_count = 0
+    if steamid:
+        preview_games = await fetch_owned_games(steamid)
+        game_count = len(preview_games)
+    
     embed = Embed(
-        title="🔗 Steam Link",
-        description=t(gid, 'confirm_link', name=profile_name, discord_name=discord_name),
-        color=0x1a9fff
+        title="🔗 Link Steam Profile",
+        description=(
+            f"**Steam Profile:** `{profile_name}`\n"
+            f"**Discord User:** `{discord_name}`\n\n"
+            f"🎮 **Games found:** `{game_count}`\n\n"
+            f"*Confirm to link this profile to your Discord account*"
+        ),
+        color=0x1b2838
     )
+    
+    if avatar_url:
+        embed.set_thumbnail(url=avatar_url)
+    
+    embed.add_field(
+        name="🔒 Privacy",
+        value="Your profile must be **public** to sync games",
+        inline=False
+    )
+    
+    embed.set_footer(text=f"Profile: {steam_url[:50]}...")
+    embed.timestamp = datetime.utcnow()
     view = ConfirmView(interaction.user.id, steam_url, profile_name, discord_name, gid)
     await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
@@ -558,8 +669,14 @@ async def unlink_steam_handler(interaction: discord.Interaction):
     
     profile = await get_profile(interaction.user.id)
     if not profile:
-        return await interaction.followup.send(t(gid, 'profile_not_found'), ephemeral=True)
+        embed = Embed(
+            title="ℹ️ No Profile Found",
+            description="You don't have a Steam profile linked.\n\nUse `/link_steam` to link your profile!",
+            color=0x95a5a6
+        )
+        return await interaction.followup.send(embed=embed, ephemeral=True)
 
+    steam_url = profile['steam_url']
     await delete_profile(interaction.user.id)
     
     role = discord.utils.get(interaction.guild.roles, name=VERIFIED_ROLE)
@@ -569,7 +686,26 @@ async def unlink_steam_handler(interaction: discord.Interaction):
         except:
             pass
     
-    await interaction.followup.send(t(gid, 'unlink_success'), ephemeral=True)
+    # Красивый embed для отвязки
+    unlink_embed = Embed(
+        title="✅ Profile Unlinked",
+        description=(
+            f"Your Steam profile has been successfully unlinked.\n\n"
+            f"**Previous profile:** `{steam_url[:50]}...`\n"
+            f"🎮 **Games removed:** All synced games\n"
+            f"🎖️ **Role removed:** `{VERIFIED_ROLE}`"
+        ),
+        color=0xe74c3c
+    )
+    unlink_embed.add_field(
+        name="💡 Want to link again?",
+        value="You can re-link your profile anytime using `/link_steam`",
+        inline=False
+    )
+    unlink_embed.set_footer(text="Steam Bot • Profile unlinked")
+    unlink_embed.timestamp = datetime.utcnow()
+    
+    await interaction.followup.send(embed=unlink_embed, ephemeral=True)
 
 async def find_teammates_handler(interaction: discord.Interaction, game: str):
     gid = interaction.guild_id
@@ -583,17 +719,64 @@ async def find_teammates_handler(interaction: discord.Interaction, game: str):
     if not rows:
         return await interaction.followup.send(t(gid, 'no_players'), ephemeral=True)
     
-    mentions = []
-    for row in sorted(rows, key=lambda x: x['playtime'], reverse=True):
+    # Получаем appid игры для картинки и ссылки
+    async with db_pool.acquire() as conn:
+        game_info = await conn.fetchrow(
+            'SELECT appid FROM games WHERE LOWER(game_name) = LOWER($1) LIMIT 1',
+            game
+        )
+    
+    appid = game_info['appid'] if game_info else None
+    
+    # Формируем список игроков с эмодзи в зависимости от времени игры
+    player_list = []
+    for idx, row in enumerate(sorted(rows, key=lambda x: x['playtime'], reverse=True), 1):
         member = interaction.guild.get_member(row['discord_id'])
         if member:
-            mentions.append(f"{member.mention} (`{row['playtime']}h`)")
+            hrs = row['playtime']
+            # Ранги по времени игры
+            if hrs > 500:
+                rank = "🏆 Legend"
+            elif hrs > 200:
+                rank = "💎 Master"
+            elif hrs > 100:
+                rank = "⭐ Expert"
+            elif hrs > 50:
+                rank = "✨ Veteran"
+            elif hrs > 10:
+                rank = "🎯 Player"
+            else:
+                rank = "🆕 Rookie"
+            
+            player_list.append(f"`#{idx}` {rank} • {member.mention} **`{hrs}h`**")
     
     embed = Embed(
         title=f"🎮 {game}",
-        description="\n".join(mentions) if mentions else t(gid, 'no_players'),
-        color=0x1a9fff
+        description=f"*Found {len(player_list)} player(s) who own this game*\n\n" + "\n".join(player_list[:15]),  # Лимит 15 игроков
+        color=0x1b2838
     )
+    
+    # Добавляем картинку игры
+    if appid:
+        game_img = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"
+        game_url = f"https://store.steampowered.com/app/{appid}"
+        embed.set_thumbnail(url=game_img)
+        embed.add_field(
+            name="🔗 Links",
+            value=f"[View in Steam Store]({game_url})",
+            inline=False
+        )
+    
+    embed.set_footer(text=f"Requested by {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
+    embed.timestamp = datetime.utcnow()
+    
+    if len(player_list) > 15:
+        embed.add_field(
+            name="ℹ️ Note",
+            value=f"Showing top 15 of {len(player_list)} players",
+            inline=False
+        )
+    
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 async def common_games_handler(interaction: discord.Interaction, user: discord.Member):
@@ -645,11 +828,17 @@ async def discount_game_check():
     if not ch:
         return
     
-    url = 'https://store.steampowered.com/search/?maxprice=free&specials=1&ndl=1'
+    # URL для игр со скидкой 100%
+    url = 'https://store.steampowered.com/search/?maxprice=free&specials=1'
     
-    async with aiohttp.ClientSession() as session:
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    
+    async with aiohttp.ClientSession(headers=headers) as session:
         async with session.get(url) as resp:
             if not resp.ok:
+                print(f"Failed to fetch Steam sales: {resp.status}")
                 return
             html = await resp.text()
     
@@ -658,33 +847,57 @@ async def discount_game_check():
     async with db_pool.acquire() as conn:
         existing = {r['game_link'] for r in await conn.fetch('SELECT game_link FROM sent_sales')}
         
-        for item in soup.select('.search_result_row')[:10]:
+        # Ищем игры в результатах поиска
+        for item in soup.select('a.search_result_row')[:15]:
+            # Получаем название игры
             title_elem = item.select_one('.title')
             if not title_elem:
                 continue
                 
             title = title_elem.text.strip()
-            link = item['href'].split('?')[0]
+            link = item.get('href', '').split('?')[0]
             
-            if link in existing:
+            if not link or link in existing:
                 continue
             
-            price_elem = item.select_one('.discount_final_price')
-            if not price_elem or 'Free' not in price_elem.text:
+            # Проверяем что игра действительно со скидкой 100%
+            discount_pct = item.select_one('.discount_pct')
+            original_price = item.select_one('.discount_original_price')
+            final_price = item.select_one('.discount_final_price')
+            
+            # Должна быть скидка и финальная цена "Free"
+            if not discount_pct or not final_price:
                 continue
+                
+            discount_text = discount_pct.text.strip()
+            final_price_text = final_price.text.strip()
             
-            await conn.execute(
-                'INSERT INTO sent_sales (game_link, discount_end) VALUES ($1, NOW() + interval \'7 days\') ON CONFLICT DO NOTHING',
-                link
-            )
-            
-            embed = Embed(
-                title="🔥 100% OFF",
-                description=f"**[{title}]({link})**\n\nFree to keep forever!",
-                color=0xff6b6b
-            )
-            embed.set_footer(text="Steam Sale")
-            await ch.send(embed=embed)
+            # Проверяем что это -100% и Free
+            if '-100%' in discount_text and ('Free' in final_price_text or 'Бесплатно' in final_price_text):
+                print(f"Found 100% discount game: {title}")
+                
+                await conn.execute(
+                    'INSERT INTO sent_sales (game_link, discount_end) VALUES ($1, NOW() + interval \'7 days\') ON CONFLICT DO NOTHING',
+                    link
+                )
+                
+                embed = Embed(
+                    title="🔥 100% OFF - FREE TO KEEP!",
+                    description=f"**[{title}]({link})**\n\n💰 Was: {original_price.text.strip() if original_price else 'Paid'}\n✨ Now: **FREE**\n\n⏰ Limited time offer!",
+                    color=0xff6b6b
+                )
+                embed.set_footer(text="Steam 100% Discount")
+                
+                # Пробуем получить изображение игры
+                img = item.select_one('img')
+                if img and img.get('src'):
+                    embed.set_thumbnail(url=img['src'])
+                
+                try:
+                    await ch.send(embed=embed)
+                    await asyncio.sleep(2)  # Задержка между отправками
+                except Exception as e:
+                    print(f"Error sending discount message: {e}")
 
 @tasks.loop(hours=24)
 async def epic_free_check():
