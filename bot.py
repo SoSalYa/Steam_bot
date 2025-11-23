@@ -621,16 +621,16 @@ class GamesView(ui.View):
             chunk = sorted_list[i:i+per_page]
             
             if chunk:
-                # Формируем description как список игр с иконками
+                # Формируем description как список игр БЕЗ эмодзи
                 game_lines = []
-                for appid in chunk:
+                for idx, appid in enumerate(chunk, 1):
                     game_data = data[self.ctx_user.id][appid]
                     game_name = game_data['name']
                     icon_hash = game_data.get('icon', '')
                     game_url = self._get_game_store_url(appid)
                     
-                    # Кликабельное название игры
-                    game_link = f"[{game_name}]({game_url})"
+                    # Кликабельное название игры с номером
+                    game_link = f"`{idx}.` [{game_name}]({game_url})"
                     
                     if self.show_hours:
                         # Показываем часы для всех игроков
@@ -639,10 +639,10 @@ class GamesView(ui.View):
                             hrs = data[u.id].get(appid, {}).get('hrs', 0)
                             hours_info.append(f"**{u.display_name}**: {hrs}h")
                         
-                        game_lines.append(f"🎮 {game_link}\n    └ {' • '.join(hours_info)}")
+                        game_lines.append(f"{game_link}\n     └ {' • '.join(hours_info)}")
                     else:
                         # Просто название игры
-                        game_lines.append(f"🎮 {game_link}")
+                        game_lines.append(game_link)
                 
                 description = "\n".join(game_lines)
                 
@@ -651,6 +651,16 @@ class GamesView(ui.View):
                     description=description,
                     color=0x171a21  # Темный цвет Steam
                 )
+                
+                # Устанавливаем thumbnail - иконку первой игры на странице
+                if chunk:
+                    first_game_data = data[self.ctx_user.id][chunk[0]]
+                    first_icon_hash = first_game_data.get('icon', '')
+                    if first_icon_hash:
+                        icon_url = self._get_game_icon_url(chunk[0], first_icon_hash)
+                        # Используем увеличенную иконку для thumbnail
+                        large_icon = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{chunk[0]}/header.jpg"
+                        emb.set_thumbnail(url=large_icon)
                 
                 # Информация об участниках
                 participants_text = " • ".join(f"**{u.display_name}**" for u in self.users)
