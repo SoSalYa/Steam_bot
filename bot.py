@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 import psutil
 from flask import Flask, jsonify
 from threading import Thread
+import urllib.parse
 
 # === Config ===
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
@@ -95,12 +96,8 @@ TEXTS = {
         'cmd_invite_player': 'invite_player',
         'cmd_invite_desc': 'Send a lobby invitation to a player',
         'cmd_invite_param_user': 'Player to invite',
-        'cmd_invite_param_lobby': 'Steam lobby link (steam://joinlobby/...)',
         'cmd_create_lobby': 'create_lobby',
         'cmd_create_lobby_desc': 'Create a public lobby announcement',
-        'cmd_create_lobby_param': 'Steam lobby link (steam://joinlobby/...)',
-        'invalid_lobby_link': '❌ Invalid Steam lobby link! Format: `steam://joinlobby/APPID/LOBBYID/STEAMID`',
-        'game_not_found': '❌ Could not find game information for this lobby.',
         'invite_sent': '✅ Invitation sent to {user}!',
         'lobby_created': '✅ Lobby announcement posted!',
         'invite_title': '🎮 Game Invitation',
@@ -184,12 +181,8 @@ TEXTS = {
         'cmd_invite_player': 'пригласить_игрока',
         'cmd_invite_desc': 'Отправить приглашение в лобби игроку',
         'cmd_invite_param_user': 'Игрок для приглашения',
-        'cmd_invite_param_lobby': 'Ссылка на лобби Steam (steam://joinlobby/...)',
         'cmd_create_lobby': 'создать_лобби',
         'cmd_create_lobby_desc': 'Создать публичное объявление о лобби',
-        'cmd_create_lobby_param': 'Ссылка на лобби Steam (steam://joinlobby/...)',
-        'invalid_lobby_link': '❌ Неверная ссылка на лобби Steam! Формат: `steam://joinlobby/APPID/LOBBYID/STEAMID`',
-        'game_not_found': '❌ Не удалось найти информацию об игре для этого лобби.',
         'invite_sent': '✅ Приглашение отправлено {user}!',
         'lobby_created': '✅ Объявление о лобби опубликовано!',
         'invite_title': '🎮 Приглашение в игру',
@@ -260,7 +253,7 @@ TEXTS = {
         'all_synced': 'Всі синхронізовані ігри',
         'role_removed': '🎖️ Роль видалено',
         'want_relink': "💡 Хочете прив'язати знову?",
-        'relink_text': "Ви можете перепривʼязати профіль в будь-який час використовуючи `/привязати_steam`",
+        'relink_text': "Ви можете переприв'язати профіль в будь-який час використовуючи `/привязати_steam`",
         'ranks': '🏅 Ранги',
         'ranks_text': '🏆 500г+ • 💎 200г+ • ⭐ 100г+ • ✨ 50г+ • 🎯 10г+ • 🆕 <10г',
         'requested_by': 'Запитав',
@@ -271,29 +264,25 @@ TEXTS = {
         'type_to_search': 'Почніть вводити назву гри...',
         'no_games_found': 'Не знайдено ігор за запитом "{query}"',
         'cmd_invite_player': 'запросити_гравця',
-        'cmd_invite_desc': 'Надіслати запрошення в лобі гравцю',
+        'cmd_invite_desc': 'Надіслати запрошення в лоббі гравцю',
         'cmd_invite_param_user': 'Гравець для запрошення',
-        'cmd_invite_param_lobby': 'Посилання на лобі Steam (steam://joinlobby/...)',
-        'cmd_create_lobby': 'створити_лобі',
-        'cmd_create_lobby_desc': 'Створити публічне оголошення про лобі',
-        'cmd_create_lobby_param': 'Посилання на лобі Steam (steam://joinlobby/...)',
-        'invalid_lobby_link': '❌ Невірне посилання на лобі Steam! Формат: `steam://joinlobby/APPID/LOBBYID/STEAMID`',
-        'game_not_found': '❌ Не вдалося знайти інформацію про гру для цього лобі.',
+        'cmd_create_lobby': 'створити_лоббі',
+        'cmd_create_lobby_desc': 'Створити публічне оголошення про лоббі',
         'invite_sent': '✅ Запрошення надіслано {user}!',
-        'lobby_created': '✅ Оголошення про лобі опубліковано!',
+        'lobby_created': '✅ Оголошення про лоббі опубліковано!',
         'invite_title': '🎮 Запрошення в гру',
         'invite_description': '**{inviter}** запрошує вас пограти в **{game}**!',
-        'lobby_title': '🎮 Лобі відкрито',
+        'lobby_title': '🎮 Лоббі відкрито',
         'lobby_description': '**{creator}** шукає гравців в **{game}**!',
-        'join_button': '🎮 Приєднатися до лобі',
-        'lobby_info': 'Натисніть на кнопку нижче, щоб приєднатися до лобі',
+        'join_button': '🎮 Приєднатись до лоббі',
+        'lobby_info': 'Натисніть на кнопку нижче, щоб приєднатись до лоббі',
         'invitation_from': 'Запрошення від',
-        'lobby_by': 'Лобі створив',
-        'checking_profile': '🔍 Перевіряю ваш профіль Steam на активне лобі...',
-        'no_lobby_found': '❌ Активне лобі не знайдено у вашому профілі Steam!\n\n**Як виправити:**\n1. Створіть лобі в грі\n2. Переконайтесь що ваш профіль Steam **публічний**\n3. Переконайтесь що ви **в лобі** при використанні команди\n4. Гра повинна підтримувати Steam лобі',
+        'lobby_by': 'Лоббі створив',
+        'checking_profile': '🔍 Перевіряю ваш профіль Steam на активне лоббі...',
+        'no_lobby_found': '❌ Активне лоббі не знайдено у вашому профілі Steam!\n\n**Як виправити:**\n1. Створіть лоббі в грі\n2. Переконайтесь що ваш профіль Steam **публічний**\n3. Переконайтесь що ви **в лоббі** при використанні команди\n4. Гра повинна підтримувати Steam лоббі',
         'profile_private': '❌ Ваш профіль Steam приватний!\n\nБудь ласка, встановіть профіль як **публічний** в налаштуваннях Steam:\nПрофіль → Редагувати профіль → Налаштування приватності → Мій профіль: Публічний',
-        'not_in_game': '❌ Ви зараз не в грі!\n\nБудь ласка, запустіть гру і створіть лобі спочатку.',
-        'game_no_lobby': '❌ У грі, в яку ви граєте, немає активного доступного лобі.\n\nПереконайтесь що:\n• Ви створили лобі в грі\n• Лобі встановлено як "Друзі можуть приєднатися" або "Публічне"\n• Гра підтримує Steam лобі',
+        'not_in_game': '❌ Ви зараз не в грі!\n\nБудь ласка, запустіть гру і створіть лоббі спочатку.',
+        'game_no_lobby': '❌ У грі, в яку ви граєте, немає активного доступного лоббі.\n\nПереконайтесь що:\n• Ви створили лоббі в грі\n• Лоббі встановлено як "Друзі можуть приєднатись" або "Публічне"\n• Гра підтримує Steam лоббі',
     }
 }
 
@@ -337,6 +326,14 @@ async def init_db():
     
     async with db_pool.acquire() as conn:
         await conn.execute('''
+            CREATE TABLE IF NOT EXISTS profiles (
+                discord_id BIGINT PRIMARY KEY,
+                steam_url TEXT,
+                last_bound TIMESTAMP
+            )
+        ''')
+        
+        await conn.execute('''
             CREATE TABLE IF NOT EXISTS games (
                 discord_id BIGINT,
                 appid INTEGER,
@@ -358,11 +355,26 @@ async def init_db():
                 language TEXT DEFAULT 'en'
             )
         ''')
+        
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS sent_sales (
+                game_link TEXT PRIMARY KEY,
+                discount_end TIMESTAMP
+            )
+        ''')
+        
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS sent_epic (
+                game_title TEXT PRIMARY KEY,
+                offer_end TIMESTAMP
+            )
+        ''')
+        
         rows = await conn.fetch('SELECT guild_id, language FROM server_settings')
         for row in rows:
             server_langs[row['guild_id']] = row['language']
     
-    print("✓ Database pool created and tables verified")
+    print("✔ Database pool created and tables verified")
 
 async def resolve_steamid(identifier: str) -> str | None:
     if identifier.isdigit():
@@ -496,7 +508,6 @@ async def get_game_info_by_appid(appid: int):
 
 def parse_lobby_link(lobby_link: str) -> dict | None:
     """Парсит Steam lobby ссылку и извлекает appid, lobby_id, steam_id"""
-    # Формат: steam://joinlobby/APPID/LOBBYID/STEAMID
     pattern = r'steam://joinlobby/(\d+)/(\d+)/(\d+)'
     match = re.match(pattern, lobby_link.strip())
     
@@ -514,7 +525,6 @@ async def get_lobby_from_profile(discord_id: int) -> dict | None:
     Получает активное лобби из профиля Steam пользователя
     Возвращает dict с информацией о лобби или None
     """
-    # Получаем Steam URL пользователя
     profile = await get_profile(discord_id)
     if not profile:
         return {'error': 'no_profile'}
@@ -528,9 +538,7 @@ async def get_lobby_from_profile(discord_id: int) -> dict | None:
     if not steamid:
         return {'error': 'invalid_steamid'}
     
-    # Получаем информацию о текущей игре через Steam API
     async with aiohttp.ClientSession() as session:
-        # 1. Проверяем что делает пользователь (GetPlayerSummaries)
         async with session.get(
             'https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/',
             params={'key': STEAM_API_KEY, 'steamids': steamid}
@@ -546,26 +554,20 @@ async def get_lobby_from_profile(discord_id: int) -> dict | None:
             
             player = players[0]
             
-            # Проверяем приватность профиля
             if player.get('communityvisibilitystate') != 3:
                 return {'error': 'profile_private'}
             
-            # Проверяем что пользователь в игре
             if 'gameid' not in player:
                 return {'error': 'not_in_game'}
             
             appid = int(player['gameid'])
             game_name = player.get('gameextrainfo', 'Unknown Game')
         
-        # 2. Пытаемся получить информацию о лобби через Rich Presence
-        # Парсим HTML страницу профиля для получения lobby данных
         try:
             async with session.get(steam_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.ok:
                     html = await resp.text()
                     
-                    # Ищем rich presence данные с информацией о лобби
-                    # Паттерн для поиска steam://joinlobby/ ссылок
                     lobby_pattern = r'steam://joinlobby/(\d+)/(\d+)/(\d+)'
                     match = re.search(lobby_pattern, html)
                     
@@ -574,7 +576,6 @@ async def get_lobby_from_profile(discord_id: int) -> dict | None:
                         lobby_id = match.group(2)
                         lobby_steamid = match.group(3)
                         
-                        # Проверяем что appid совпадает
                         if lobby_appid == appid:
                             return {
                                 'appid': appid,
@@ -586,7 +587,6 @@ async def get_lobby_from_profile(discord_id: int) -> dict | None:
         except Exception as e:
             print(f"Error parsing profile for lobby: {e}")
         
-        # 3. Альтернативный способ - через JavaScript данные профиля
         try:
             async with session.get(
                 f'https://steamcommunity.com/profiles/{steamid}',
@@ -595,7 +595,6 @@ async def get_lobby_from_profile(discord_id: int) -> dict | None:
                 if resp.ok:
                     html = await resp.text()
                     
-                    # Ищем в JavaScript данных
                     js_pattern = r'g_rgProfileData\s*=\s*({[^;]+});'
                     js_match = re.search(js_pattern, html)
                     
@@ -604,14 +603,12 @@ async def get_lobby_from_profile(discord_id: int) -> dict | None:
                             import json
                             profile_data = json.loads(js_match.group(1))
                             
-                            # Проверяем наличие lobby в rich presence
                             if 'rich_presence' in profile_data:
                                 rp = profile_data['rich_presence']
                                 if 'steam_display' in rp and 'joinable' in rp.get('steam_display', '').lower():
-                                    # Строим ссылку на лобби
                                     return {
                                         'appid': appid,
-                                        'lobby_id': '0',  # Placeholder
+                                        'lobby_id': '0',
                                         'steam_id': steamid,
                                         'full_link': f'steam://joinlobby/{appid}/0/{steamid}',
                                         'game_name': game_name
@@ -621,7 +618,6 @@ async def get_lobby_from_profile(discord_id: int) -> dict | None:
         except Exception as e:
             print(f"Error getting rich presence: {e}")
         
-        # Если ничего не нашли, но пользователь в игре
         return {'error': 'game_no_lobby', 'game_name': game_name, 'appid': appid}
 
 async def set_server_lang(guild_id: int, lang: str):
@@ -674,15 +670,19 @@ class LanguageView(ui.View):
 # === Lobby Join View ===
 class LobbyJoinView(ui.View):
     def __init__(self, lobby_link: str, guild_id: int):
-        super().__init__(timeout=None)  # Кнопка не истекает
+        super().__init__(timeout=None)
         self.lobby_link = lobby_link
         self.guild_id = guild_id
+        
+        # Преобразуем steam:// ссылку в HTTP ссылку через Steam linkfilter
+        encoded_link = urllib.parse.quote(lobby_link)
+        http_link = f"https://steamcommunity.com/linkfilter/?u={encoded_link}"
         
         # Создаем кнопку со ссылкой
         join_button = ui.Button(
             label=t(guild_id, 'join_button'),
             style=discord.ButtonStyle.link,
-            url=lobby_link,
+            url=http_link,
             emoji="🎮"
         )
         self.add_item(join_button)
@@ -768,7 +768,7 @@ class ConfirmView(ui.View):
 # === Games View ===
 class GamesView(ui.View):
     def __init__(self, ctx_user: discord.Member, initial_users: List[discord.Member], guild_id: int):
-        super().__init__(timeout=900)  # 15 минут
+        super().__init__(timeout=900)
         self.ctx_user = ctx_user
         self.users = initial_users[:6]
         self.pages: List[Embed] = []
@@ -872,7 +872,6 @@ class GamesView(ui.View):
         await interaction.response.edit_message(embed=self.pages[self.page_idx], view=self)
 
     async def on_timeout(self):
-        """Удаляет сообщение после истечения 15 минут"""
         try:
             if self.message:
                 await self.message.delete()
@@ -880,7 +879,7 @@ class GamesView(ui.View):
                 if self.message.id in PAGINATION_VIEWS:
                     del PAGINATION_VIEWS[self.message.id]
                     
-                print(f"✓ Deleted expired games view message {self.message.id}")
+                print(f"✔ Deleted expired games view message {self.message.id}")
         except discord.NotFound:
             print(f"Message {self.message.id} already deleted")
         except Exception as e:
@@ -978,7 +977,6 @@ class GamesView(ui.View):
                 page_num = len(self.pages) + 1
                 total_pages = max((total - 1) // per_page + 1, 1)
                 
-                # Вычисляем оставшееся время
                 elapsed = (datetime.utcnow() - self.creation_time).total_seconds()
                 remaining_minutes = max(0, int((900 - elapsed) / 60))
                 
@@ -1043,28 +1041,28 @@ async def on_ready():
     try:
         if not daily_link_check.is_running():
             daily_link_check.start()
-            print("✓ daily_link_check started")
+            print("✔ daily_link_check started")
     except Exception as e:
         print(f"✗ Error starting daily_link_check: {e}")
     
     try:
         if not discount_game_check.is_running():
             discount_game_check.start()
-            print("✓ discount_game_check started")
+            print("✔ discount_game_check started")
     except Exception as e:
         print(f"✗ Error starting discount_game_check: {e}")
     
     try:
         if not cleanup_old_views.is_running():
             cleanup_old_views.start()
-            print("✓ cleanup_old_views started")
+            print("✔ cleanup_old_views started")
     except Exception as e:
         print(f"✗ Error starting cleanup_old_views: {e}")
     
     try:
         if not epic_free_check.is_running():
             epic_free_check.start()
-            print("✓ epic_free_check started")
+            print("✔ epic_free_check started")
     except Exception as e:
         print(f"✗ Error starting epic_free_check: {e}")
     
@@ -1087,37 +1085,31 @@ async def on_guild_join(guild: discord.Guild):
         pass
 
 async def register_commands_for_guild(guild: discord.Guild, lang: str):
-    # link_steam
     @app_commands.command(name=t(guild.id, 'cmd_link_steam'), description=t(guild.id, 'cmd_link_desc'))
     @app_commands.describe(steam_url=t(guild.id, 'cmd_link_param'))
     async def link_steam_cmd(interaction: discord.Interaction, steam_url: str):
         await link_steam_handler(interaction, steam_url)
     
-    # unlink_steam
     @app_commands.command(name=t(guild.id, 'cmd_unlink_steam'), description=t(guild.id, 'cmd_unlink_desc'))
     async def unlink_steam_cmd(interaction: discord.Interaction):
         await unlink_steam_handler(interaction)
     
-    # find_teammates с автозаполнением
     @app_commands.command(name=t(guild.id, 'cmd_find_teammates'), description=t(guild.id, 'cmd_find_desc'))
     @app_commands.describe(game=t(guild.id, 'cmd_find_param'))
     @app_commands.autocomplete(game=game_autocomplete)
     async def find_teammates_cmd(interaction: discord.Interaction, game: str):
         await find_teammates_handler(interaction, game)
     
-    # common_games
     @app_commands.command(name=t(guild.id, 'cmd_common_games'), description=t(guild.id, 'cmd_common_desc'))
     @app_commands.describe(user=t(guild.id, 'cmd_common_param'))
     async def common_games_cmd(interaction: discord.Interaction, user: discord.Member):
         await common_games_handler(interaction, user)
     
-    # invite_player - личное приглашение (БЕЗ параметра lobby_link)
     @app_commands.command(name=t(guild.id, 'cmd_invite_player'), description=t(guild.id, 'cmd_invite_desc'))
     @app_commands.describe(user=t(guild.id, 'cmd_invite_param_user'))
     async def invite_player_cmd(interaction: discord.Interaction, user: discord.Member):
         await invite_player_handler(interaction, user)
     
-    # create_lobby - серверное объявление (БЕЗ параметров)
     @app_commands.command(name=t(guild.id, 'cmd_create_lobby'), description=t(guild.id, 'cmd_create_lobby_desc'))
     async def create_lobby_cmd(interaction: discord.Interaction):
         await create_lobby_handler(interaction)
@@ -1302,7 +1294,6 @@ async def find_teammates_handler(interaction: discord.Interaction, game: str):
         color=0x171a21
     )
     
-    # Добавляем картинку игры
     if appid and icon_hash:
         header_url = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"
         embed.set_thumbnail(url=header_url)
@@ -1338,13 +1329,10 @@ async def invite_player_handler(interaction: discord.Interaction, user: discord.
     """Отправляет личное приглашение игроку (автоматически получает лобби из профиля)"""
     gid = interaction.guild_id
     
-    # Отправляем начальное сообщение
     await interaction.response.send_message(t(gid, 'checking_profile'), ephemeral=True)
     
-    # Получаем лобби из профиля пользователя
     lobby_result = await get_lobby_from_profile(interaction.user.id)
     
-    # Обработка ошибок
     if not lobby_result or 'error' in lobby_result:
         error_type = lobby_result.get('error', 'unknown') if lobby_result else 'no_profile'
         
@@ -1362,31 +1350,25 @@ async def invite_player_handler(interaction: discord.Interaction, user: discord.
         else:
             return await interaction.edit_original_response(content=t(gid, 'no_lobby_found'))
     
-    # Получаем информацию об игре
     appid = lobby_result['appid']
     game_name = lobby_result.get('game_name', 'Unknown Game')
     
-    # Пытаемся получить иконку игры из БД
     game_info = await get_game_info_by_appid(appid)
     icon_hash = game_info['icon_hash'] if game_info else ''
     
-    # Если в БД нет, используем название из API
     if game_info and game_info['game_name']:
         game_name = game_info['game_name']
     
-    # Создаем embed для приглашения
     embed = Embed(
         title=t(gid, 'invite_title'),
         description=t(gid, 'invite_description', inviter=interaction.user.display_name, game=game_name),
         color=0x1b2838
     )
     
-    # Добавляем иконку игры
     if icon_hash:
         header_url = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"
         embed.set_thumbnail(url=header_url)
     else:
-        # Fallback на стандартную иконку
         header_url = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"
         embed.set_thumbnail(url=header_url)
     
@@ -1402,10 +1384,8 @@ async def invite_player_handler(interaction: discord.Interaction, user: discord.
     )
     embed.timestamp = datetime.utcnow()
     
-    # Создаем view с кнопкой присоединения
     view = LobbyJoinView(lobby_result['full_link'], gid)
     
-    # Отправляем личное сообщение
     try:
         await user.send(embed=embed, view=view)
         await interaction.edit_original_response(content=t(gid, 'invite_sent', user=user.mention))
@@ -1418,13 +1398,10 @@ async def create_lobby_handler(interaction: discord.Interaction):
     """Создает публичное объявление о лобби в канале (автоматически получает лобби)"""
     gid = interaction.guild_id
     
-    # Отправляем начальное сообщение
     await interaction.response.send_message(t(gid, 'checking_profile'), ephemeral=True)
     
-    # Получаем лобби из профиля пользователя
     lobby_result = await get_lobby_from_profile(interaction.user.id)
     
-    # Обработка ошибок
     if not lobby_result or 'error' in lobby_result:
         error_type = lobby_result.get('error', 'unknown') if lobby_result else 'no_profile'
         
@@ -1442,29 +1419,24 @@ async def create_lobby_handler(interaction: discord.Interaction):
         else:
             return await interaction.edit_original_response(content=t(gid, 'no_lobby_found'))
     
-    # Получаем информацию об игре
     appid = lobby_result['appid']
     game_name = lobby_result.get('game_name', 'Unknown Game')
     
-    # Пытаемся получить иконку игры из БД
     game_info = await get_game_info_by_appid(appid)
     icon_hash = game_info['icon_hash'] if game_info else ''
     
     if game_info and game_info['game_name']:
         game_name = game_info['game_name']
     
-    # Создаем embed для объявления
     embed = Embed(
         title=t(gid, 'lobby_title'),
         description=t(gid, 'lobby_description', creator=interaction.user.display_name, game=game_name),
         color=0x00d4aa
     )
     
-    # Добавляем большую иконку игры
     header_url = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"
     embed.set_image(url=header_url)
     
-    # Маленькая иконка в thumbnail
     if icon_hash:
         icon_url = f"https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/{appid}/{icon_hash}.jpg"
         embed.set_thumbnail(url=icon_url)
@@ -1481,10 +1453,8 @@ async def create_lobby_handler(interaction: discord.Interaction):
     )
     embed.timestamp = datetime.utcnow()
     
-    # Создаем view с кнопкой присоединения
     view = LobbyJoinView(lobby_result['full_link'], gid)
     
-    # Отправляем в канал
     await interaction.channel.send(embed=embed, view=view)
     await interaction.edit_original_response(content=t(gid, 'lobby_created'))
 
