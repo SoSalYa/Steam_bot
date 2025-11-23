@@ -41,9 +41,9 @@ TEXTS = {
         'profile_not_found': 'ℹ️ Profile not found.',
         'unlink_success': '✅ Profile unlinked.',
         'no_players': 'Nobody plays this game.',
-        'no_common_games': 'No common games.',
-        'common_games_title': 'Common Games ({count})',
-        'participants': 'Participants',
+        'no_common_games': 'No games found that all players own.',
+        'common_games_title': 'Steam Library - Common Games ({count})',
+        'participants': 'Players',
         'page': 'Page {current}/{total}',
         'yes': 'Yes',
         'no': 'No',
@@ -60,6 +60,11 @@ TEXTS = {
         'cmd_common_games': 'common_games',
         'cmd_common_desc': 'Show common games',
         'cmd_common_param': 'User to compare',
+        'hours_visible': '✅ Visible',
+        'hours_hidden': '👁️ Hidden',
+        'sort_alphabetical': '🔤 Alphabetical',
+        'sort_total_hours': '📊 By Total Playtime',
+        'sort_your_hours': "⭐ By {user}'s Playtime",
     },
     'ru': {
         'not_verified': '❌ Сначала привяжите Steam! Используйте `/привязать_steam`',
@@ -74,9 +79,9 @@ TEXTS = {
         'profile_not_found': 'ℹ️ Профиль не найден.',
         'unlink_success': '✅ Профиль отвязан.',
         'no_players': 'Никто не играет в эту игру.',
-        'no_common_games': 'Нет общих игр.',
-        'common_games_title': 'Общие игры ({count})',
-        'participants': 'Участники',
+        'no_common_games': 'Нет игр, которые есть у всех игроков.',
+        'common_games_title': 'Библиотека Steam - Общие игры ({count})',
+        'participants': 'Игроки',
         'page': 'Стр. {current}/{total}',
         'yes': 'Да',
         'no': 'Нет',
@@ -93,6 +98,11 @@ TEXTS = {
         'cmd_common_games': 'общие_игры',
         'cmd_common_desc': 'Показать общие игры',
         'cmd_common_param': 'Пользователь для сравнения',
+        'hours_visible': '✅ Видимо',
+        'hours_hidden': '👁️ Скрыто',
+        'sort_alphabetical': '🔤 По алфавиту',
+        'sort_total_hours': '📊 По общему времени',
+        'sort_your_hours': "⭐ По времени {user}",
     },
     'ua': {
         'not_verified': "❌ Спочатку прив'яжіть Steam! Використовуйте `/привязати_steam`",
@@ -107,9 +117,9 @@ TEXTS = {
         'profile_not_found': 'ℹ️ Профіль не знайдено.',
         'unlink_success': "✅ Профіль відв'язано.",
         'no_players': 'Ніхто не грає в цю гру.',
-        'no_common_games': 'Немає спільних ігор.',
-        'common_games_title': 'Спільні ігри ({count})',
-        'participants': 'Учасники',
+        'no_common_games': 'Немає ігор, які є у всіх гравців.',
+        'common_games_title': 'Бібліотека Steam - Спільні ігри ({count})',
+        'participants': 'Гравці',
         'page': 'Стор. {current}/{total}',
         'yes': 'Так',
         'no': 'Ні',
@@ -126,6 +136,11 @@ TEXTS = {
         'cmd_common_games': 'спільні_ігри',
         'cmd_common_desc': 'Показати спільні ігри',
         'cmd_common_param': 'Користувач для порівняння',
+        'hours_visible': '✅ Видимо',
+        'hours_hidden': '👁️ Приховано',
+        'sort_alphabetical': '🔤 За алфавітом',
+        'sort_total_hours': '📊 За загальним часом',
+        'sort_your_hours': "⭐ За часом {user}",
     }
 }
 
@@ -391,90 +406,175 @@ class GamesView(ui.View):
         self.page_idx = 0
         self.message = None
         self.guild_id = guild_id
+        self.show_hours = False  # По умолчанию часы скрыты
+        self.sort_mode = 'name'  # 'name', 'total_hours', 'your_hours'
+        
+        # Добавляем кнопки управления
+        self.update_buttons()
 
-    def _get_game_image_url(self, appid: int) -> str:
-        """Получает URL миниатюры игры из Steam"""
-        return f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/capsule_231x87.jpg"
+    def _get_game_icon_url(self, appid: int) -> str:
+        """Получает URL маленькой иконки игры (32x32) как в библиотеке Steam"""
+        return f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/capsule_sm_120.jpg"
     
     def _get_game_store_url(self, appid: int) -> str:
         """Получает URL страницы игры в Steam Store"""
         return f"https://store.steampowered.com/app/{appid}"
+
+    def update_buttons(self):
+        """Обновляет кнопки в зависимости от состояния"""
+        self.clear_items()
+        
+        # Кнопка переключения отображения часов
+        hours_btn = ui.Button(
+            label="⏱️ Hours" if not self.show_hours else "⏱️ Hide Hours",
+            style=discord.ButtonStyle.primary if self.show_hours else discord.ButtonStyle.secondary,
+            custom_id="toggle_hours"
+        )
+        hours_btn.callback = self.toggle_hours
+        self.add_item(hours_btn)
+        
+        # Кнопка сортировки
+        sort_label = {
+            'name': '🔤 Sort: A-Z',
+            'total_hours': '📊 Sort: Total Hours',
+            'your_hours': '⭐ Sort: Your Hours'
+        }
+        sort_btn = ui.Button(
+            label=sort_label[self.sort_mode],
+            style=discord.ButtonStyle.secondary,
+            custom_id="sort"
+        )
+        sort_btn.callback = self.cycle_sort
+        self.add_item(sort_btn)
+
+    async def toggle_hours(self, interaction: discord.Interaction):
+        """Переключает отображение часов"""
+        if interaction.user.id != self.ctx_user.id:
+            return await interaction.response.send_message("This is not your request.", ephemeral=True)
+        
+        self.show_hours = not self.show_hours
+        self.update_buttons()
+        await self._build_pages()
+        await interaction.response.edit_message(embed=self.pages[self.page_idx], view=self)
+
+    async def cycle_sort(self, interaction: discord.Interaction):
+        """Циклически меняет режим сортировки"""
+        if interaction.user.id != self.ctx_user.id:
+            return await interaction.response.send_message("This is not your request.", ephemeral=True)
+        
+        sort_cycle = ['name', 'total_hours', 'your_hours']
+        current_idx = sort_cycle.index(self.sort_mode)
+        self.sort_mode = sort_cycle[(current_idx + 1) % len(sort_cycle)]
+        
+        self.page_idx = 0  # Сбрасываем на первую страницу
+        self.update_buttons()
+        await self._build_pages()
+        await interaction.response.edit_message(embed=self.pages[self.page_idx], view=self)
 
     async def _build_pages(self):
         data = await get_all_games()
         sets = [set(data.get(u.id, {})) for u in self.users]
         common = set.intersection(*sets) if sets else set()
         
-        sorted_list = sorted(common, key=lambda a: data[self.ctx_user.id][a]['name'].lower())
+        # Сортировка в зависимости от режима
+        if self.sort_mode == 'name':
+            sorted_list = sorted(common, key=lambda a: data[self.ctx_user.id][a]['name'].lower())
+        elif self.sort_mode == 'total_hours':
+            sorted_list = sorted(
+                common,
+                key=lambda a: sum(data[u.id].get(a, {}).get('hrs', 0) for u in self.users),
+                reverse=True
+            )
+        else:  # your_hours
+            sorted_list = sorted(
+                common,
+                key=lambda a: data[self.ctx_user.id].get(a, {}).get('hrs', 0),
+                reverse=True
+            )
         
         self.pages.clear()
-        per_page = 5  # Уменьшили до 5 для лучшей читаемости
+        per_page = 10
         total = len(sorted_list)
         
         for i in range(0, max(total, 1), per_page):
             chunk = sorted_list[i:i+per_page]
             
             if chunk:
-                emb = Embed(
-                    title=f"🎮 {t(self.guild_id, 'common_games_title', count=total)}",
-                    description=f"*{t(self.guild_id, 'participants')}:* " + ", ".join(f"**{u.display_name}**" for u in self.users),
-                    color=0x1b2838  # Темный цвет Steam
-                )
-                
+                # Формируем description как список игр
+                game_lines = []
                 for appid in chunk:
                     game_name = data[self.ctx_user.id][appid]['name']
                     game_url = self._get_game_store_url(appid)
+                    icon_url = self._get_game_icon_url(appid)
                     
-                    # Собираем информацию о времени игры для каждого пользователя
-                    playtime_info = []
-                    total_hours = 0
-                    for u in self.users:
-                        hrs = data[u.id].get(appid, {}).get('hrs', 0)
-                        total_hours += hrs
-                        # Используем эмодзи для визуального представления
-                        if hrs > 100:
-                            icon = "🔥"
-                        elif hrs > 50:
-                            icon = "⭐"
-                        elif hrs > 10:
-                            icon = "✨"
-                        else:
-                            icon = "🎯"
-                        playtime_info.append(f"{icon} **{u.display_name}**: `{hrs}h`")
+                    # Кликабельное название игры
+                    game_link = f"[{game_name}]({game_url})"
                     
-                    # Формируем поле для игры
-                    field_value = "\n".join(playtime_info)
-                    field_value += f"\n\n📊 **Total**: `{total_hours}h` | [🔗 View in Steam]({game_url})"
-                    
-                    emb.add_field(
-                        name=f"🎮 {game_name}",
-                        value=field_value,
-                        inline=False
-                    )
+                    if self.show_hours:
+                        # Показываем часы для всех игроков
+                        hours_info = []
+                        for u in self.users:
+                            hrs = data[u.id].get(appid, {}).get('hrs', 0)
+                            hours_info.append(f"**{u.display_name}**: {hrs}h")
+                        
+                        game_lines.append(f"🎮 {game_link}\n    └ {' • '.join(hours_info)}")
+                    else:
+                        # Просто название игры
+                        game_lines.append(f"🎮 {game_link}")
                 
-                # Устанавливаем thumbnail - картинку первой игры на странице
-                if chunk:
-                    first_game_img = self._get_game_image_url(chunk[0])
-                    emb.set_thumbnail(url=first_game_img)
+                description = "\n".join(game_lines)
+                
+                emb = Embed(
+                    title=f"📚 {t(self.guild_id, 'common_games_title', count=total)}",
+                    description=description,
+                    color=0x171a21  # Темный цвет Steam
+                )
+                
+                # Информация об участниках
+                participants_text = " • ".join(f"**{u.display_name}**" for u in self.users)
+                emb.add_field(
+                    name=f"👥 {t(self.guild_id, 'participants')}",
+                    value=participants_text,
+                    inline=False
+                )
+                
+                # Информация о сортировке
+                if self.sort_mode == 'name':
+                    sort_text = t(self.guild_id, 'sort_alphabetical')
+                elif self.sort_mode == 'total_hours':
+                    sort_text = t(self.guild_id, 'sort_total_hours')
+                else:
+                    sort_text = t(self.guild_id, 'sort_your_hours', user=self.ctx_user.display_name)
+                
+                emb.add_field(
+                    name="📋 Sorting",
+                    value=sort_text,
+                    inline=True
+                )
+                
+                # Статус отображения часов
+                hours_status = t(self.guild_id, 'hours_visible') if self.show_hours else t(self.guild_id, 'hours_hidden')
+                emb.add_field(
+                    name="⏱️ Playtime",
+                    value=hours_status,
+                    inline=True
+                )
                 
                 page_num = len(self.pages) + 1
                 total_pages = max((total - 1) // per_page + 1, 1)
                 
-                # Красивый футер с навигацией
                 emb.set_footer(
-                    text=f"📄 {t(self.guild_id, 'page', current=page_num, total=total_pages)} • Use ⬅️ ➡️ to navigate",
-                    icon_url="https://cdn.cloudflare.com/ajax/libs/flag-icon-css/3.5.0/flags/4x3/steam.svg"
+                    text=f"{t(self.guild_id, 'page', current=page_num, total=total_pages)} • Use reactions to navigate",
                 )
                 emb.timestamp = datetime.utcnow()
                 
             else:
                 # Страница "нет общих игр"
                 emb = Embed(
-                    title="🎮 " + t(self.guild_id, 'common_games_title', count=0),
+                    title=f"📚 {t(self.guild_id, 'common_games_title', count=0)}",
                     description=f"😔 {t(self.guild_id, 'no_common_games')}\n\n*Try linking more games or playing together!*",
                     color=0x5c7e8b
                 )
-                emb.set_thumbnail(url="https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/avatars/b5/b5bd56c1aa4644a474a2e4972be27ef9e82e517e_full.jpg")
             
             self.pages.append(emb)
 
@@ -539,14 +639,20 @@ async def on_reaction_add(reaction, user):
     if not view:
         return
     
+    # Проверяем что это запрос от правильного пользователя
+    if user.id != view.ctx_user.id:
+        await reaction.message.remove_reaction(reaction.emoji, user)
+        return
+    
     if reaction.emoji == "➡️" and view.page_idx < len(view.pages) - 1:
         view.page_idx += 1
     elif reaction.emoji == "⬅️" and view.page_idx > 0:
         view.page_idx -= 1
     else:
+        await reaction.message.remove_reaction(reaction.emoji, user)
         return
     
-    await reaction.message.edit(embed=view.pages[view.page_idx])
+    await reaction.message.edit(embed=view.pages[view.page_idx], view=view)
     await reaction.message.remove_reaction(reaction.emoji, user)
 
 # === Dynamic Command Registration ===
@@ -736,36 +842,44 @@ async def find_teammates_handler(interaction: discord.Interaction, game: str):
             hrs = row['playtime']
             # Ранги по времени игры
             if hrs > 500:
-                rank = "🏆 Legend"
+                rank = "🏆"
             elif hrs > 200:
-                rank = "💎 Master"
+                rank = "💎"
             elif hrs > 100:
-                rank = "⭐ Expert"
+                rank = "⭐"
             elif hrs > 50:
-                rank = "✨ Veteran"
+                rank = "✨"
             elif hrs > 10:
-                rank = "🎯 Player"
+                rank = "🎯"
             else:
-                rank = "🆕 Rookie"
+                rank = "🆕"
             
-            player_list.append(f"`#{idx}` {rank} • {member.mention} **`{hrs}h`**")
+            player_list.append(f"`#{idx}` {rank} {member.mention} **`{hrs}h`**")
+    
+    # Формируем заголовок с кликабельной ссылкой
+    if appid:
+        game_url = f"https://store.steampowered.com/app/{appid}"
+        title = f"🔍 [**{game}**]({game_url})"
+    else:
+        title = f"🔍 **{game}**"
     
     embed = Embed(
-        title=f"🎮 {game}",
-        description=f"*Found {len(player_list)} player(s) who own this game*\n\n" + "\n".join(player_list[:15]),  # Лимит 15 игроков
-        color=0x1b2838
+        title="Find Teammates",
+        description=f"{title}\n\n*Found {len(player_list)} player(s)*\n\n" + "\n".join(player_list[:15]),
+        color=0x171a21
     )
     
-    # Добавляем картинку игры
+    # Добавляем маленькую иконку игры как thumbnail
     if appid:
-        game_img = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"
-        game_url = f"https://store.steampowered.com/app/{appid}"
-        embed.set_thumbnail(url=game_img)
-        embed.add_field(
-            name="🔗 Links",
-            value=f"[View in Steam Store]({game_url})",
-            inline=False
-        )
+        game_icon = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/capsule_sm_120.jpg"
+        embed.set_thumbnail(url=game_icon)
+    
+    # Легенда рангов
+    embed.add_field(
+        name="🏅 Ranks",
+        value="🏆 500h+ • 💎 200h+ • ⭐ 100h+ • ✨ 50h+ • 🎯 10h+ • 🆕 <10h",
+        inline=False
+    )
     
     embed.set_footer(text=f"Requested by {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
     embed.timestamp = datetime.utcnow()
