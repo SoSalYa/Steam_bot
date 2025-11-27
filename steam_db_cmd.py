@@ -1,6 +1,6 @@
 """
-steam_db_cmd.py - Обработчик команды /steam_db
-Комбинирует данные об онлайне, ценах и истории скидок
+steam_db_cmd.py - UPDATED with interactive UI
+Now includes persistent button panel under embed
 """
 
 import discord
@@ -8,17 +8,24 @@ from discord import Embed
 from typing import Optional
 from datetime import datetime
 import asyncio
+import logging
 
 from steam_online import steam_online
 from steam_price import steam_price
 from steam_history import SteamPriceHistory
+from steamdb_ui import SteamDBView, get_tracking_state
+from http_session import get_http_manager
+
+logger = logging.getLogger(__name__)
 
 
 class SteamDBCommand:
     """Класс для обработки команды /steam_db"""
     
-    def __init__(self, history_manager: SteamPriceHistory):
+    def __init__(self, history_manager: SteamPriceHistory, redis_client=None):
         self.history = history_manager
+        self.redis = redis_client
+        self.http = get_http_manager()
     
     def _format_date(self, dt: datetime) -> str:
         """Форматирует дату в читаемый вид"""
@@ -43,6 +50,12 @@ class SteamDBCommand:
         else:
             return dt.strftime('%B %d, %Y')
     
+    def _truncate(self, text: str, max_length: int) -> str:
+        """Truncate text to max_length"""
+        if len(text) <= max_length:
+            return text
+        return text[:max_length-3] + '...'
+    
     def _create_player_stats_field(self, online_data: dict) -> tuple:
         """Создает поле со статистикой игроков"""
         if 'error' in online_data:
@@ -63,7 +76,7 @@ class SteamDBCommand:
             if all_time_date != 'Unknown':
                 value += f" ({all_time_date})"
         
-        return ('👥 Player Statistics', value, True)
+        return ('👥 Player Statistics', self._truncate(value, 1024), True)
     
     def _create_price_field(self, price_data: dict) -> tuple:
         """Создает поле с информацией о текущей цене"""
@@ -85,12 +98,11 @@ class SteamDBCommand:
         
         return ('💰 Current Price (USD)', value, True)
     
-    def _create_regional_prices_field(self, regional_data: dict) -> tuple:
+    def _create_regional_prices_field(self, regional_data: dict) -> Optional[tuple]:
         """Создает поле с региональными ценами"""
         if not regional_data or len(regional_data) < 2:
             return None
         
-        # Выбираем интересные регионы
         interesting_regions = ['us', 'eu', 'ru', 'tr', 'ar']
         prices = []
         
@@ -98,7 +110,7 @@ class SteamDBCommand:
             if region in regional_data:
                 data = regional_data[region]
                 if not data.get('is_free') and data.get('formatted_final') != 'N/A':
-                    region_name = steam_price.REGIONS[region]['name']
+                    region_name = steam_price.REGIONS.get(region, {}).get('name', region.upper())
                     price = data['formatted_final']
                     
                     discount = data.get('discount_percent', 0)
@@ -108,8 +120,8 @@ class SteamDBCommand:
                         prices.append(f"**{region_name}:** {price}")
         
         if prices:
-            value = '\n'.join(prices[:5])  # Максимум 5 регионов
-            return ('🌍 Regional Prices', value, False)
+            value = '\n'.join(prices[:5])
+            return ('🌍 Regional Prices', self._truncate(value, 1024), False)
         
         return None
     
@@ -127,27 +139,26 @@ class SteamDBCommand:
         
         if min_discount and min_discount > 0:
             date_str = self._format_date(min_date)
-            lines.append(f"**Lowest Discount:** -{min_discount}% ({date_str})")
+            lines.append(f"**Best Ever:** -{min_discount}% ({date_str})")
         else:
-            lines.append("**Lowest Discount:** Never on sale")
+            lines.append("**Best Ever:** Never on sale")
         
         if last_discount and last_discount > 0:
             date_str = self._format_date(last_date)
-            lines.append(f"**Last Discount:** -{last_discount}% ({date_str})")
+            lines.append(f"**Last Sale:** -{last_discount}% ({date_str})")
         else:
-            lines.append("**Last Discount:** Not recently")
+            lines.append("**Last Sale:** Not recently")
         
         total = stats.get('total_snapshots', 0)
         if total > 0:
             first_seen = stats.get('first_seen')
-            lines.append(f"**Tracking since:** {self._format_date(first_seen)}")
+            lines.append(f"**Tracked:** {total} snapshots since {self._format_date(first_seen)}")
         
         value = '\n'.join(lines)
-        return ('📊 Discount History', value, False)
+        return ('📊 Discount History', self._truncate(value, 1024), False)
     
     async def _search_game_by_name(self, game_name: str) -> Optional[int]:
         """Поиск appid по названию игры"""
-        # Сначала пробуем найти в локальной БД
         try:
             async with self.history.db_pool.acquire() as conn:
                 row = await conn.fetchrow('''
@@ -158,10 +169,10 @@ class SteamDBCommand:
                 
                 if row:
                     return row['appid']
-        except:
-            pass
+        except Exception as e:
+            logger.error(f"Error searching in DB: {e}")
         
-        # Если не нашли, используем Steam API
+        # Fallback to Steam API
         return await steam_online.search_game_appid(game_name)
     
     async def execute(self, interaction: discord.Interaction, game_query: str):
@@ -202,15 +213,20 @@ class SteamDBCommand:
             
             # Обработка ошибок
             if isinstance(online_data, Exception):
+                logger.error(f"Online data error: {online_data}")
                 online_data = {'error': str(online_data)}
             if isinstance(price_us, Exception):
+                logger.error(f"Price data error: {price_us}")
                 price_us = {'error': str(price_us)}
             if isinstance(regional_prices, Exception):
+                logger.error(f"Regional prices error: {regional_prices}")
                 regional_prices = {}
             if isinstance(discount_stats, Exception):
+                logger.error(f"Discount stats error: {discount_stats}")
                 discount_stats = {}
             
         except Exception as e:
+            logger.error(f"Error fetching game data: {e}")
             embed = Embed(
                 title="❌ Error",
                 description=f"Failed to fetch game data: {str(e)}",
@@ -218,7 +234,7 @@ class SteamDBCommand:
             )
             return await interaction.followup.send(embed=embed, ephemeral=True)
         
-        # Сохраняем снимок цены для истории
+        # Сохраняем снимок цены для истории (background task)
         if price_us and not price_us.get('is_free') and not price_us.get('error'):
             asyncio.create_task(self.history.save_price_snapshot(
                 appid,
@@ -233,10 +249,16 @@ class SteamDBCommand:
         game_name = price_us.get('name', f'Game {appid}')
         game_url = f"https://store.steampowered.com/app/{appid}"
         
+        # Truncate game name if too long
+        display_name = self._truncate(game_name, 200)
+        
         embed = Embed(
-            title=f"🎮 {game_name}",
+            title=f"🎮 {display_name}",
             url=game_url,
-            description=f"**App ID:** `{appid}` • [Steam Store]({game_url}) • [SteamDB](https://steamdb.info/app/{appid}/)",
+            description=self._truncate(
+                f"**App ID:** `{appid}` • [Steam Store]({game_url}) • [SteamDB](https://steamdb.info/app/{appid}/)",
+                4096
+            ),
             color=0x1b2838,
             timestamp=datetime.utcnow()
         )
@@ -256,7 +278,7 @@ class SteamDBCommand:
         
         # Если есть скидка, добавляем эмодзи в заголовок
         if price_us.get('discount_percent', 0) > 0:
-            embed.title = f"🔥 {game_name}"
+            embed.title = f"🔥 {display_name}"
         
         regional_field = self._create_regional_prices_field(regional_prices)
         if regional_field:
@@ -272,20 +294,53 @@ class SteamDBCommand:
             sources.append(online_data['source'])
         sources.append('Steam Store API')
         
+        footer_text = f"Data from: {', '.join(sources)} • Requested by {interaction.user.display_name}"
         embed.set_footer(
-            text=f"Data from: {', '.join(sources)} • Requested by {interaction.user.display_name}",
+            text=self._truncate(footer_text, 2048),
             icon_url=interaction.user.display_avatar.url
         )
         
-        await interaction.followup.send(embed=embed)
+        # Check user's tracking state
+        is_tracking = await get_tracking_state(
+            self.history.db_pool,
+            interaction.user.id,
+            appid,
+            interaction.guild_id
+        )
+        
+        # Create interactive view
+        view = SteamDBView(
+            appid=appid,
+            game_name=game_name,
+            db_pool=self.history.db_pool,
+            history_manager=self.history,
+            redis_client=self.redis,
+            initial_tracking_state=is_tracking
+        )
+        
+        # Send with view
+        message = await interaction.followup.send(embed=embed, view=view)
+        
+        # Store message ID for persistent view reconstruction (optional)
+        try:
+            async with self.history.db_pool.acquire() as conn:
+                await conn.execute('''
+                    INSERT INTO steam_ui_messages 
+                    (message_id, channel_id, guild_id, appid, user_id, expires_at)
+                    VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '7 days')
+                    ON CONFLICT (message_id) DO NOTHING
+                ''', message.id, message.channel.id, interaction.guild_id, appid, interaction.user.id)
+        except Exception as e:
+            logger.error(f"Error storing UI message: {e}")
 
 
 # Функция-обертка для использования в боте
 async def handle_steam_db_command(
     interaction: discord.Interaction, 
     game: str,
-    history_manager: SteamPriceHistory
+    history_manager: SteamPriceHistory,
+    redis_client=None
 ):
     """Wrapper функция для команды"""
-    cmd = SteamDBCommand(history_manager)
+    cmd = SteamDBCommand(history_manager, redis_client)
     await cmd.execute(interaction, game)
