@@ -1,6 +1,6 @@
 """
-steam_history.py - Модуль для работы с историей цен и скидок
-Записывает ежедневные снимки цен и вычисляет статистику
+steam_history.py - FIXED VERSION with SQL injection protection
+All INTERVAL queries now use safe parameterization
 """
 
 import asyncpg
@@ -23,20 +23,7 @@ class SteamPriceHistory:
         discount_percent: int, 
         currency: str
     ) -> bool:
-        """
-        Сохраняет снимок цены в базу данных
-        
-        Args:
-            appid: ID приложения
-            cc: Код региона
-            price_final: Финальная цена в центах
-            price_initial: Начальная цена в центах
-            discount_percent: Процент скидки
-            currency: Код валюты
-        
-        Returns:
-            True если успешно
-        """
+        """Сохраняет снимок цены в базу данных"""
         try:
             async with self.db_pool.acquire() as conn:
                 await conn.execute('''
@@ -45,9 +32,7 @@ class SteamPriceHistory:
                     VALUES ($1, NOW(), $2, $3, $4, $5, $6)
                 ''', appid, cc, price_final, price_initial, discount_percent, currency)
                 
-                # Обновляем сводную таблицу
                 await self._update_summary(appid, discount_percent, conn)
-                
                 return True
                 
         except Exception as e:
@@ -57,7 +42,6 @@ class SteamPriceHistory:
     async def _update_summary(self, appid: int, discount_percent: int, conn: asyncpg.Connection):
         """Обновляет сводную таблицу с минимальными и последними скидками"""
         
-        # Проверяем, существует ли запись
         existing = await conn.fetchrow(
             'SELECT * FROM steam_price_summary WHERE appid = $1',
             appid
@@ -66,7 +50,6 @@ class SteamPriceHistory:
         now = datetime.utcnow()
         
         if not existing:
-            # Создаем новую запись
             await conn.execute('''
                 INSERT INTO steam_price_summary 
                 (appid, first_seen, last_seen, min_discount, min_discount_date, last_discount, last_discount_date)
@@ -74,12 +57,10 @@ class SteamPriceHistory:
             ''', appid, now, discount_percent if discount_percent > 0 else None, 
                  discount_percent if discount_percent > 0 else None)
         else:
-            # Обновляем существующую запись
             update_fields = ['last_seen = $2']
             params = [appid, now]
             param_idx = 3
             
-            # Обновляем минимальную скидку
             if discount_percent > 0:
                 current_min = existing['min_discount']
                 if current_min is None or discount_percent < current_min:
@@ -90,7 +71,6 @@ class SteamPriceHistory:
                     params.append(now)
                     param_idx += 1
                 
-                # Обновляем последнюю скидку
                 update_fields.append(f'last_discount = ${param_idx}')
                 params.append(discount_percent)
                 param_idx += 1
@@ -108,13 +88,12 @@ class SteamPriceHistory:
         days: int = 365
     ) -> List[Dict]:
         """
-        Получает историю цен за указанный период
-        
-        Returns:
-            Список словарей с данными о ценах
+        FIXED: Получает историю цен за указанный период
+        Uses safe INTERVAL parameterization
         """
         try:
             async with self.db_pool.acquire() as conn:
+                # SAFE: Use parameter concatenation for interval
                 rows = await conn.fetch('''
                     SELECT 
                         appid, 
@@ -125,9 +104,11 @@ class SteamPriceHistory:
                         discount_percent, 
                         currency
                     FROM steam_price_history
-                    WHERE appid = $1 AND cc = $2 AND fetched_at >= NOW() - INTERVAL '{days} days'
+                    WHERE appid = $1 
+                      AND cc = $2 
+                      AND fetched_at >= NOW() - ($3 || ' days')::interval
                     ORDER BY fetched_at DESC
-                ''', appid, cc)
+                ''', appid, cc, str(days))
                 
                 return [dict(row) for row in rows]
                 
@@ -136,30 +117,15 @@ class SteamPriceHistory:
             return []
     
     async def get_discount_stats(self, appid: int) -> Dict:
-        """
-        Получает статистику по скидкам для игры
-        
-        Returns:
-            {
-                'min_discount': int,
-                'min_discount_date': datetime,
-                'last_discount': int,
-                'last_discount_date': datetime,
-                'total_snapshots': int,
-                'first_seen': datetime,
-                'last_seen': datetime
-            }
-        """
+        """Получает статистику по скидкам для игры"""
         try:
             async with self.db_pool.acquire() as conn:
-                # Получаем из сводной таблицы
                 summary = await conn.fetchrow(
                     'SELECT * FROM steam_price_summary WHERE appid = $1',
                     appid
                 )
                 
                 if summary:
-                    # Получаем общее количество снимков
                     count = await conn.fetchval(
                         'SELECT COUNT(*) FROM steam_price_history WHERE appid = $1',
                         appid
@@ -175,7 +141,6 @@ class SteamPriceHistory:
                         'last_seen': summary['last_seen']
                     }
                 else:
-                    # Нет данных в сводной таблице, вычисляем из истории
                     return await self._calculate_stats_from_history(appid, conn)
                     
         except Exception as e:
@@ -196,7 +161,6 @@ class SteamPriceHistory:
             WHERE appid = $1
         ''', appid)
         
-        # Находим даты для минимальной и последней скидки
         min_discount_row = await conn.fetchrow('''
             SELECT fetched_at, discount_percent
             FROM steam_price_history
@@ -224,17 +188,7 @@ class SteamPriceHistory:
         }
     
     async def get_best_discount_ever(self, appid: int) -> Optional[Dict]:
-        """
-        Находит лучшую (максимальную) скидку за всю историю
-        
-        Returns:
-            {
-                'discount_percent': int,
-                'price_final': int,
-                'date': datetime,
-                'cc': str
-            }
-        """
+        """Находит лучшую (максимальную) скидку за всю историю"""
         try:
             async with self.db_pool.acquire() as conn:
                 row = await conn.fetchrow('''
@@ -261,34 +215,37 @@ class SteamPriceHistory:
     
     async def cleanup_old_history(self, days: int = 730):
         """
-        Удаляет старые записи истории (старше N дней)
-        Сохраняет только значимые точки (скидки, изменения цен)
+        FIXED: Удаляет старые записи истории
+        Uses safe INTERVAL parameterization
         """
         try:
             async with self.db_pool.acquire() as conn:
-                # Удаляем старые записи без скидок
-                deleted = await conn.execute('''
+                # SAFE: Use parameter for interval
+                result = await conn.execute('''
                     DELETE FROM steam_price_history
-                    WHERE fetched_at < NOW() - INTERVAL '{days} days'
-                    AND discount_percent = 0
-                ''')
+                    WHERE fetched_at < NOW() - ($1 || ' days')::interval
+                      AND discount_percent = 0
+                ''', str(days))
                 
-                print(f"Cleaned up {deleted} old price history records")
+                print(f"Cleaned up {result} old price history records")
                 return True
                 
         except Exception as e:
             print(f"Error cleaning up price history: {e}")
             return False
     
-    async def get_tracked_games(self, discord_id: int) -> List[Dict]:
-        """Получает список отслеживаемых игр пользователя"""
+    async def get_tracked_games(self, discord_id: int, guild_id: int) -> List[Dict]:
+        """
+        UPDATED: Получает список отслеживаемых игр пользователя
+        Now includes guild_id for multi-server support
+        """
         try:
             async with self.db_pool.acquire() as conn:
                 rows = await conn.fetch('''
                     SELECT * FROM steam_tracked_games
-                    WHERE discord_id = $1
+                    WHERE discord_id = $1 AND guild_id = $2 AND is_active = TRUE
                     ORDER BY created_at DESC
-                ''', discord_id)
+                ''', discord_id, guild_id)
                 
                 return [dict(row) for row in rows]
                 
@@ -300,18 +257,26 @@ class SteamPriceHistory:
         self, 
         discord_id: int, 
         appid: int, 
-        game_name: str, 
+        game_name: str,
+        guild_id: int,
         notify_threshold: int = 50
     ) -> bool:
-        """Добавляет игру в отслеживание для пользователя"""
+        """
+        UPDATED: Добавляет игру в отслеживание
+        Now includes guild_id
+        """
         try:
             async with self.db_pool.acquire() as conn:
                 await conn.execute('''
-                    INSERT INTO steam_tracked_games (discord_id, appid, game_name, notify_threshold)
-                    VALUES ($1, $2, $3, $4)
-                    ON CONFLICT (discord_id, appid) DO UPDATE 
-                    SET notify_threshold = $4
-                ''', discord_id, appid, game_name, notify_threshold)
+                    INSERT INTO steam_tracked_games 
+                    (discord_id, appid, game_name, guild_id, notify_threshold, is_active)
+                    VALUES ($1, $2, $3, $4, $5, TRUE)
+                    ON CONFLICT (discord_id, appid, guild_id) 
+                    DO UPDATE SET 
+                        notify_threshold = $5,
+                        is_active = TRUE,
+                        game_name = $3
+                ''', discord_id, appid, game_name, guild_id, notify_threshold)
                 
                 return True
                 
@@ -319,23 +284,78 @@ class SteamPriceHistory:
             print(f"Error adding tracked game: {e}")
             return False
     
-    async def remove_tracked_game(self, discord_id: int, appid: int) -> bool:
-        """Удаляет игру из отслеживания"""
+    async def remove_tracked_game(self, discord_id: int, appid: int, guild_id: int) -> bool:
+        """
+        UPDATED: Удаляет игру из отслеживания
+        Now uses soft delete (is_active = FALSE)
+        """
         try:
             async with self.db_pool.acquire() as conn:
                 await conn.execute('''
-                    DELETE FROM steam_tracked_games
-                    WHERE discord_id = $1 AND appid = $2
-                ''', discord_id, appid)
+                    UPDATE steam_tracked_games
+                    SET is_active = FALSE
+                    WHERE discord_id = $1 AND appid = $2 AND guild_id = $3
+                ''', discord_id, appid, guild_id)
                 
                 return True
                 
         except Exception as e:
             print(f"Error removing tracked game: {e}")
             return False
+    
+    async def get_games_needing_notification(self, hours_since_last: int = 24) -> List[Dict]:
+        """
+        FIXED: Get games that need discount notifications
+        Uses safe INTERVAL parameterization
+        """
+        try:
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch('''
+                    SELECT 
+                        t.discord_id,
+                        t.appid,
+                        t.game_name,
+                        t.guild_id,
+                        t.notify_threshold,
+                        h.discount_percent,
+                        h.price_final,
+                        h.price_initial,
+                        h.currency
+                    FROM steam_tracked_games t
+                    INNER JOIN LATERAL (
+                        SELECT * FROM steam_price_history
+                        WHERE appid = t.appid 
+                          AND cc = 'us'
+                          AND discount_percent >= t.notify_threshold
+                        ORDER BY fetched_at DESC
+                        LIMIT 1
+                    ) h ON TRUE
+                    WHERE t.is_active = TRUE
+                      AND (
+                          t.last_notified IS NULL 
+                          OR t.last_notified < NOW() - ($1 || ' hours')::interval
+                      )
+                ''', str(hours_since_last))
+                
+                return [dict(row) for row in rows]
+                
+        except Exception as e:
+            print(f"Error fetching games needing notification: {e}")
+            return []
+    
+    async def mark_notified(self, discord_id: int, appid: int, guild_id: int):
+        """Mark that user was notified about this game"""
+        try:
+            async with self.db_pool.acquire() as conn:
+                await conn.execute('''
+                    UPDATE steam_tracked_games
+                    SET last_notified = NOW()
+                    WHERE discord_id = $1 AND appid = $2 AND guild_id = $3
+                ''', discord_id, appid, guild_id)
+        except Exception as e:
+            print(f"Error marking notified: {e}")
 
 
-# Функция для создания экземпляра с пулом БД
 def create_history_manager(db_pool: asyncpg.Pool) -> SteamPriceHistory:
     """Создает менеджер истории цен с пулом БД"""
     return SteamPriceHistory(db_pool)
