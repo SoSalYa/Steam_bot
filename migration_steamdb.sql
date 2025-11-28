@@ -1,194 +1,132 @@
 -- ============================================
--- Steam DB Features Migration
--- Добавляет таблицы для отслеживания истории цен
+-- Migration 001: Security Fixes & Guild Support
+-- Fixes SQL injection, adds guild_id tracking
 -- ============================================
 
--- Таблица истории цен (ежедневные снимки)
-CREATE TABLE IF NOT EXISTS steam_price_history (
-    id BIGSERIAL PRIMARY KEY,
+-- Add guild_id to tracked games for multi-server support
+ALTER TABLE steam_tracked_games 
+ADD COLUMN IF NOT EXISTS guild_id BIGINT;
+
+ALTER TABLE steam_tracked_games 
+ADD COLUMN IF NOT EXISTS last_notified TIMESTAMP WITH TIME ZONE;
+
+-- Drop old constraint if exists
+ALTER TABLE steam_tracked_games 
+DROP CONSTRAINT IF EXISTS steam_tracked_games_discord_id_appid_key;
+
+-- Create new unique constraint including guild_id
+CREATE UNIQUE INDEX IF NOT EXISTS ux_tracked_games_user_app_guild 
+ON steam_tracked_games(discord_id, appid, guild_id);
+
+-- Indexes for performance
+CREATE INDEX IF NOT EXISTS idx_tracked_guild_active 
+ON steam_tracked_games(guild_id, is_active) 
+WHERE is_active = TRUE;
+
+CREATE INDEX IF NOT EXISTS idx_tracked_appid_guild 
+ON steam_tracked_games(appid, guild_id);
+
+CREATE INDEX IF NOT EXISTS idx_tracked_last_notified 
+ON steam_tracked_games(last_notified) 
+WHERE last_notified IS NOT NULL;
+
+-- Optimize price history queries
+CREATE INDEX IF NOT EXISTS idx_price_appid_date_desc 
+ON steam_price_history(appid, fetched_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_price_appid_cc_date 
+ON steam_price_history(appid, cc, fetched_at DESC);
+
+-- Optimize summary lookups
+CREATE INDEX IF NOT EXISTS idx_price_summary_last_seen 
+ON steam_price_summary(last_seen DESC);
+
+CREATE INDEX IF NOT EXISTS idx_price_summary_max_discount_filtered 
+ON steam_price_summary(max_discount DESC) 
+WHERE max_discount > 0;
+
+-- Add message tracking for persistent views
+CREATE TABLE IF NOT EXISTS steam_ui_messages (
+    message_id BIGINT PRIMARY KEY,
+    channel_id BIGINT NOT NULL,
+    guild_id BIGINT,
     appid INTEGER NOT NULL,
-    fetched_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    cc TEXT NOT NULL DEFAULT 'us', -- регион (us, eu, ru и т.д.)
-    price_final INTEGER, -- цена в центах
-    price_initial INTEGER, -- начальная цена до скидки
-    discount_percent INTEGER DEFAULT 0, -- процент скидки
-    currency TEXT DEFAULT 'USD', -- валюта
-    
-    -- Индексы для быстрого поиска
-    CONSTRAINT check_positive_prices CHECK (
-        price_final >= 0 AND 
-        price_initial >= 0 AND 
-        discount_percent >= 0 AND 
-        discount_percent <= 100
-    )
-);
-
--- Индексы для оптимизации запросов
-CREATE INDEX IF NOT EXISTS idx_price_history_appid ON steam_price_history(appid);
-CREATE INDEX IF NOT EXISTS idx_price_history_fetched_at ON steam_price_history(fetched_at DESC);
-CREATE INDEX IF NOT EXISTS idx_price_history_appid_cc ON steam_price_history(appid, cc);
-CREATE INDEX IF NOT EXISTS idx_price_history_discount ON steam_price_history(appid, discount_percent DESC) 
-    WHERE discount_percent > 0;
-
--- Сводная таблица с агрегированными данными о скидках
-CREATE TABLE IF NOT EXISTS steam_price_summary (
-    appid INTEGER PRIMARY KEY,
-    first_seen TIMESTAMP WITH TIME ZONE DEFAULT NOW(), -- когда впервые отслежена игра
-    last_seen TIMESTAMP WITH TIME ZONE DEFAULT NOW(), -- последнее обновление
-    
-    -- Минимальная скидка за всю историю (самая выгодная)
-    min_discount INTEGER,
-    min_discount_date TIMESTAMP WITH TIME ZONE,
-    
-    -- Максимальная скидка (для справки)
-    max_discount INTEGER DEFAULT 0,
-    max_discount_date TIMESTAMP WITH TIME ZONE,
-    
-    -- Последняя зафиксированная скидка
-    last_discount INTEGER,
-    last_discount_date TIMESTAMP WITH TIME ZONE,
-    
-    -- Статистика
-    total_checks INTEGER DEFAULT 0, -- сколько раз проверялась цена
-    times_on_sale INTEGER DEFAULT 0, -- сколько раз была на распродаже
-    
-    CONSTRAINT check_valid_discounts CHECK (
-        (min_discount IS NULL OR (min_discount >= 0 AND min_discount <= 100)) AND
-        (max_discount >= 0 AND max_discount <= 100) AND
-        (last_discount IS NULL OR (last_discount >= 0 AND last_discount <= 100))
-    )
-);
-
--- Индексы для summary
-CREATE INDEX IF NOT EXISTS idx_price_summary_last_seen ON steam_price_summary(last_seen DESC);
-CREATE INDEX IF NOT EXISTS idx_price_summary_max_discount ON steam_price_summary(max_discount DESC) 
-    WHERE max_discount > 0;
-
--- Таблица отслеживаемых игр пользователями
-CREATE TABLE IF NOT EXISTS steam_tracked_games (
-    id BIGSERIAL PRIMARY KEY,
-    discord_id BIGINT NOT NULL, -- ID пользователя Discord
-    appid INTEGER NOT NULL, -- ID игры в Steam
-    game_name TEXT NOT NULL, -- название игры
-    notify_threshold INTEGER DEFAULT 50, -- при какой скидке уведомлять (в процентах)
+    user_id BIGINT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    last_notified TIMESTAMP WITH TIME ZONE, -- когда последний раз отправляли уведомление
-    is_active BOOLEAN DEFAULT TRUE, -- активно ли отслеживание
-    
-    -- Один пользователь не может добавить одну игру дважды
-    UNIQUE(discord_id, appid),
-    
-    CONSTRAINT check_threshold CHECK (notify_threshold >= 0 AND notify_threshold <= 100)
+    expires_at TIMESTAMP WITH TIME ZONE,
+    view_data JSONB -- Store view state if needed
 );
 
--- Индексы для tracked games
-CREATE INDEX IF NOT EXISTS idx_tracked_games_discord_id ON steam_tracked_games(discord_id);
-CREATE INDEX IF NOT EXISTS idx_tracked_games_appid ON steam_tracked_games(appid);
-CREATE INDEX IF NOT EXISTS idx_tracked_games_active ON steam_tracked_games(is_active) 
-    WHERE is_active = TRUE;
-CREATE INDEX IF NOT EXISTS idx_tracked_games_threshold ON steam_tracked_games(appid, notify_threshold);
+CREATE INDEX IF NOT EXISTS idx_ui_messages_expires 
+ON steam_ui_messages(expires_at) 
+WHERE expires_at IS NOT NULL;
 
--- Таблица с кешем информации об играх (для уменьшения запросов к Steam API)
+CREATE INDEX IF NOT EXISTS idx_ui_messages_appid 
+ON steam_ui_messages(appid);
+
+-- Leader election table for distributed tasks
+CREATE TABLE IF NOT EXISTS bot_leader_election (
+    lock_name TEXT PRIMARY KEY,
+    instance_id TEXT NOT NULL,
+    acquired_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    last_heartbeat TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_leader_expires 
+ON bot_leader_election(expires_at);
+
+-- Rate limiting table (fallback if no Redis)
+CREATE TABLE IF NOT EXISTS rate_limits (
+    key TEXT PRIMARY KEY,
+    count INTEGER DEFAULT 1,
+    window_start TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_rate_limits_expires 
+ON rate_limits(expires_at);
+
+-- Add game cache for faster lookups
 CREATE TABLE IF NOT EXISTS steam_game_cache (
     appid INTEGER PRIMARY KEY,
     game_name TEXT NOT NULL,
     short_description TEXT,
-    header_image TEXT, -- URL заголовочной картинки
-    genres TEXT[], -- массив жанров
-    developers TEXT[], -- разработчики
-    publishers TEXT[], -- издатели
-    release_date DATE, -- дата выхода
+    header_image TEXT,
+    genres TEXT[],
+    developers TEXT[],
+    publishers TEXT[],
+    release_date DATE,
     is_free BOOLEAN DEFAULT FALSE,
-    last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    
-    -- Метаданные
     metacritic_score INTEGER,
     steam_reviews_positive INTEGER DEFAULT 0,
-    steam_reviews_negative INTEGER DEFAULT 0
+    steam_reviews_negative INTEGER DEFAULT 0,
+    last_updated TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Индексы для game cache
-CREATE INDEX IF NOT EXISTS idx_game_cache_name ON steam_game_cache 
-    USING gin(to_tsvector('english', game_name));
-CREATE INDEX IF NOT EXISTS idx_game_cache_updated ON steam_game_cache(last_updated DESC);
+CREATE INDEX IF NOT EXISTS idx_game_cache_name_trgm 
+ON steam_game_cache USING gin(game_name gin_trgm_ops);
 
--- Функция для автоматического обновления timestamp
-CREATE OR REPLACE FUNCTION update_modified_column()
-RETURNS TRIGGER AS $$
+CREATE INDEX IF NOT EXISTS idx_game_cache_updated 
+ON steam_game_cache(last_updated DESC);
+
+-- Function to clean expired data
+CREATE OR REPLACE FUNCTION cleanup_expired_data()
+RETURNS void AS $$
 BEGIN
-    NEW.last_seen = NOW();
-    RETURN NEW;
+    DELETE FROM steam_ui_messages WHERE expires_at < NOW();
+    DELETE FROM rate_limits WHERE expires_at < NOW();
+    DELETE FROM bot_leader_election WHERE expires_at < NOW();
 END;
-$$ language 'plpgsql';
+$$ LANGUAGE plpgsql;
 
--- Триггер для автообновления last_seen в summary
-DROP TRIGGER IF EXISTS update_price_summary_modtime ON steam_price_summary;
-CREATE TRIGGER update_price_summary_modtime
-    BEFORE UPDATE ON steam_price_summary
-    FOR EACH ROW
-    EXECUTE FUNCTION update_modified_column();
+-- Comments
+COMMENT ON TABLE steam_ui_messages IS 'Tracks persistent UI messages for view reconstruction on restart';
+COMMENT ON TABLE bot_leader_election IS 'Distributed lock for leader election in multi-instance deployments';
+COMMENT ON COLUMN steam_tracked_games.guild_id IS 'Server ID for multi-guild tracking isolation';
+COMMENT ON COLUMN steam_tracked_games.last_notified IS 'Prevent duplicate notifications within 24h';
 
--- Представление для удобного просмотра лучших скидок
-CREATE OR REPLACE VIEW v_best_current_discounts AS
-SELECT 
-    h.appid,
-    g.game_name,
-    h.discount_percent,
-    h.price_final,
-    h.price_initial,
-    h.currency,
-    h.fetched_at,
-    s.max_discount as historical_max_discount
-FROM steam_price_history h
-LEFT JOIN games g ON h.appid = g.appid
-LEFT JOIN steam_price_summary s ON h.appid = s.appid
-WHERE h.discount_percent > 0
-    AND h.fetched_at >= NOW() - INTERVAL '24 hours'
-    AND h.cc = 'us'
-ORDER BY h.discount_percent DESC, h.fetched_at DESC;
+-- Grant permissions (adjust role name as needed)
+-- GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO your_bot_user;
 
--- Представление для статистики по играм
-CREATE OR REPLACE VIEW v_game_price_stats AS
-SELECT 
-    s.appid,
-    g.game_name,
-    s.min_discount,
-    s.max_discount,
-    s.last_discount,
-    s.times_on_sale,
-    s.total_checks,
-    s.first_seen,
-    s.last_seen,
-    CASE 
-        WHEN s.total_checks > 0 THEN 
-            ROUND((s.times_on_sale::NUMERIC / s.total_checks::NUMERIC) * 100, 2)
-        ELSE 0 
-    END as sale_frequency_percent
-FROM steam_price_summary s
-LEFT JOIN games g ON s.appid = g.appid
-ORDER BY s.max_discount DESC NULLS LAST;
-
--- Комментарии к таблицам
-COMMENT ON TABLE steam_price_history IS 'История изменений цен игр Steam (ежедневные снимки)';
-COMMENT ON TABLE steam_price_summary IS 'Сводная статистика по ценам и скидкам для каждой игры';
-COMMENT ON TABLE steam_tracked_games IS 'Игры, отслеживаемые пользователями для уведомлений о скидках';
-COMMENT ON TABLE steam_game_cache IS 'Кеш метаданных игр из Steam Store API';
-
-COMMENT ON COLUMN steam_price_history.price_final IS 'Финальная цена в центах (100 = $1.00)';
-COMMENT ON COLUMN steam_price_history.price_initial IS 'Цена до скидки в центах';
-COMMENT ON COLUMN steam_price_history.discount_percent IS 'Процент скидки (0-100)';
-
-COMMENT ON COLUMN steam_price_summary.min_discount IS 'Минимальная скидка (самая выгодная цена)';
-COMMENT ON COLUMN steam_price_summary.max_discount IS 'Максимальная скидка (самая большая % скидка)';
-COMMENT ON COLUMN steam_price_summary.times_on_sale IS 'Количество раз когда игра была на распродаже';
-
--- Начальные данные
--- Можно добавить популярные игры для отслеживания
--- INSERT INTO steam_game_cache (appid, game_name) VALUES 
--- (730, 'Counter-Strike 2'),
--- (570, 'Dota 2'),
--- (440, 'Team Fortress 2')
--- ON CONFLICT (appid) DO NOTHING;
-
--- Завершение
-SELECT 'Steam DB migration completed successfully!' as status;
+SELECT 'Migration 001 completed successfully - Security fixes and guild support added' AS status;
