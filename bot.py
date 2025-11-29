@@ -18,7 +18,7 @@ import urllib.parse
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 STEAM_API_KEY = os.getenv('STEAM_API_KEY')
 DATABASE_URL = os.getenv('DATABASE_URL')
-EPIC_API_URL = 'https://store-site-backend-static.ak.epicgames.com/freeGamesPromotions'
+EPIC_API_URL = 'https://store-site-backend-static-ipv4.ak.epicgames.com/freeGamesPromotions'
 DISCOUNT_CHANNEL_ID = int(os.getenv('DISCOUNT_CHANNEL_ID', '0'))
 EPIC_CHANNEL_ID = int(os.getenv('EPIC_CHANNEL_ID', '0'))
 LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', '0'))
@@ -538,87 +538,95 @@ async def get_lobby_from_profile(discord_id: int) -> dict | None:
     if not steamid:
         return {'error': 'invalid_steamid'}
     
-    async with aiohttp.ClientSession() as session:
-        async with session.get(
-            'https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/',
-            params={'key': STEAM_API_KEY, 'steamids': steamid}
-        ) as resp:
-            if not resp.ok:
-                return {'error': 'api_error'}
-            
-            data = await resp.json()
-            players = data.get('response', {}).get('players', [])
-            
-            if not players:
-                return {'error': 'player_not_found'}
-            
-            player = players[0]
-            
-            if player.get('communityvisibilitystate') != 3:
-                return {'error': 'profile_private'}
-            
-            if 'gameid' not in player:
-                return {'error': 'not_in_game'}
-            
-            appid = int(player['gameid'])
-            game_name = player.get('gameextrainfo', 'Unknown Game')
-        
-        try:
-            async with session.get(steam_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.ok:
-                    html = await resp.text()
-                    
-                    lobby_pattern = r'steam://joinlobby/(\d+)/(\d+)/(\d+)'
-                    match = re.search(lobby_pattern, html)
-                    
-                    if match:
-                        lobby_appid = int(match.group(1))
-                        lobby_id = match.group(2)
-                        lobby_steamid = match.group(3)
-                        
-                        if lobby_appid == appid:
-                            return {
-                                'appid': appid,
-                                'lobby_id': lobby_id,
-                                'steam_id': lobby_steamid,
-                                'full_link': f'steam://joinlobby/{appid}/{lobby_id}/{lobby_steamid}',
-                                'game_name': game_name
-                            }
-        except Exception as e:
-            print(f"Error parsing profile for lobby: {e}")
-        
-        try:
+    try:
+        async with aiohttp.ClientSession() as session:
             async with session.get(
-                f'https://steamcommunity.com/profiles/{steamid}',
+                'https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/',
+                params={'key': STEAM_API_KEY, 'steamids': steamid},
                 timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
-                if resp.ok:
-                    html = await resp.text()
-                    
-                    js_pattern = r'g_rgProfileData\s*=\s*({[^;]+});'
-                    js_match = re.search(js_pattern, html)
-                    
-                    if js_match:
-                        try:
-                            import json
-                            profile_data = json.loads(js_match.group(1))
+                if not resp.ok:
+                    return {'error': 'api_error'}
+                
+                data = await resp.json()
+                players = data.get('response', {}).get('players', [])
+                
+                if not players:
+                    return {'error': 'player_not_found'}
+                
+                player = players[0]
+                
+                if player.get('communityvisibilitystate') != 3:
+                    return {'error': 'profile_private'}
+                
+                if 'gameid' not in player:
+                    return {'error': 'not_in_game'}
+                
+                appid = int(player['gameid'])
+                game_name = player.get('gameextrainfo', 'Unknown Game')
+            
+            # Попытка найти лобби в профиле
+            try:
+                async with session.get(steam_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.ok:
+                        html = await resp.text()
+                        
+                        lobby_pattern = r'steam://joinlobby/(\d+)/(\d+)/(\d+)'
+                        match = re.search(lobby_pattern, html)
+                        
+                        if match:
+                            lobby_appid = int(match.group(1))
+                            lobby_id = match.group(2)
+                            lobby_steamid = match.group(3)
                             
-                            if 'rich_presence' in profile_data:
-                                rp = profile_data['rich_presence']
-                                if 'steam_display' in rp and 'joinable' in rp.get('steam_display', '').lower():
-                                    return {
-                                        'appid': appid,
-                                        'lobby_id': '0',
-                                        'steam_id': steamid,
-                                        'full_link': f'steam://joinlobby/{appid}/0/{steamid}',
-                                        'game_name': game_name
-                                    }
-                        except:
-                            pass
-        except Exception as e:
-            print(f"Error getting rich presence: {e}")
-        
-        return {'error': 'game_no_lobby', 'game_name': game_name, 'appid': appid}
+                            if lobby_appid == appid:
+                                return {
+                                    'appid': appid,
+                                    'lobby_id': lobby_id,
+                                    'steam_id': lobby_steamid,
+                                    'full_link': f'steam://joinlobby/{appid}/{lobby_id}/{lobby_steamid}',
+                                    'game_name': game_name
+                                }
+            except Exception as e:
+                print(f"Error parsing profile for lobby: {e}")
+            
+            # Fallback: попробовать через rich presence
+            try:
+                async with session.get(
+                    f'https://steamcommunity.com/profiles/{steamid}',
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.ok:
+                        html = await resp.text()
+                        
+                        js_pattern = r'g_rgProfileData\s*=\s*({[^;]+});'
+                        js_match = re.search(js_pattern, html)
+                        
+                        if js_match:
+                            try:
+                                import json
+                                profile_data = json.loads(js_match.group(1))
+                                
+                                if 'rich_presence' in profile_data:
+                                    rp = profile_data['rich_presence']
+                                    if 'steam_display' in rp and 'joinable' in rp.get('steam_display', '').lower():
+                                        return {
+                                            'appid': appid,
+                                            'lobby_id': '0',
+                                            'steam_id': steamid,
+                                            'full_link': f'steam://joinlobby/{appid}/0/{steamid}',
+                                            'game_name': game_name
+                                        }
+                            except Exception as e:
+                                print(f"Error parsing rich presence: {e}")
+            except Exception as e:
+                print(f"Error getting rich presence: {e}")
+            
+            return {'error': 'game_no_lobby', 'game_name': game_name, 'appid': appid}
+    
+    except Exception as e:
+        print(f"Critical error in get_lobby_from_profile: {e}")
+        return {'error': 'unknown_error', 'details': str(e)}
 
 async def set_server_lang(guild_id: int, lang: str):
     server_langs[guild_id] = lang
@@ -1478,8 +1486,12 @@ async def set_language(interaction: discord.Interaction, language: str):
 # === Tasks ===
 @tasks.loop(time=dtime(0, 10))
 async def daily_link_check():
-    async with db_pool.acquire() as conn:
-        profiles = await conn.fetch('SELECT discord_id, steam_url FROM profiles')
+    try:
+        async with db_pool.acquire() as conn:
+            profiles = await conn.fetch('SELECT discord_id, steam_url FROM profiles')
+    except Exception as e:
+        print(f"Error in daily_link_check: {e}")
+        return
     
     for p in profiles:
         ident = parse_steam_url(p['steam_url'])
@@ -1494,8 +1506,11 @@ async def daily_link_check():
 @tasks.loop(hours=12)
 async def discount_game_check():
     ch = bot.get_channel(DISCOUNT_CHANNEL_ID)
-    if not ch:
+    if not ch or DISCOUNT_CHANNEL_ID == 0:
+        print("⚠️ DISCOUNT_CHANNEL_ID not configured, skipping discount check")
         return
+    
+    try:
     
     url = 'https://store.steampowered.com/search/?maxprice=free&specials=1'
     
@@ -1560,6 +1575,9 @@ async def discount_game_check():
                     await asyncio.sleep(2)
                 except Exception as e:
                     print(f"Error sending discount message: {e}")
+                except Exception as e:
+                    print(f"Error in discount_game_check: {e}")
+
 
 @tasks.loop(hours=1)
 async def cleanup_old_views():
@@ -1585,8 +1603,11 @@ async def cleanup_old_views():
 @tasks.loop(hours=6)
 async def epic_free_check():
     ch = bot.get_channel(EPIC_CHANNEL_ID)
-    if not ch:
+    if not ch or EPIC_CHANNEL_ID == 0:
+        print("⚠️ EPIC_CHANNEL_ID not configured, skipping Epic check")
         return
+    
+    try:
     
     async with aiohttp.ClientSession() as session:
         async with session.get(EPIC_API_URL) as resp:
@@ -1622,7 +1643,9 @@ async def epic_free_check():
                         )
                         embed.set_footer(text="Epic Games")
                         await ch.send(embed=embed)
-
+                        except Exception as e:
+                        print(f"Error in epic_free_check: {e}")
+                        
 # === Start ===
 if __name__ == '__main__':
     Thread(target=run_flask, daemon=True).start()
