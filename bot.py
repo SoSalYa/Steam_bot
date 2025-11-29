@@ -28,6 +28,24 @@ BIND_TTL_HOURS = int(os.getenv('BIND_TTL_HOURS', '24'))
 CACHE_TTL = timedelta(hours=2)
 VERIFIED_ROLE = "steam verified"
 
+# === Lazy imports для Steam модулей ===
+# Импортируются только когда нужны, чтобы не падать если модули не готовы
+try:
+    from steam_price import steam_price
+    from steam_online import steam_online
+    from steam_history import SteamPriceHistory, create_history_manager
+    from steam_db_cmd import handle_steam_db_command
+    STEAM_MODULES_AVAILABLE = True
+    print("✅ Steam modules loaded successfully")
+except ImportError as e:
+    STEAM_MODULES_AVAILABLE = False
+    print(f"⚠️ Steam modules not available: {e}")
+    steam_price = None
+    steam_online = None
+    SteamPriceHistory = None
+    create_history_manager = None
+    handle_steam_db_command = None
+
 # === Локализация ===
 TEXTS = {
     'en': {
