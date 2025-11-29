@@ -1065,6 +1065,10 @@ async def on_ready():
         bot.tree.clear_commands(guild=guild)
         lang = server_langs.get(guild.id, 'en')
         await register_commands_for_guild(guild, lang)
+        
+        # Регистрируем Steam команды если доступны
+        if STEAM_MODULES_AVAILABLE:
+            await register_steam_commands_for_guild(guild, lang)
     
     await bot.tree.sync()
     print("Commands synced")
@@ -1155,6 +1159,32 @@ async def register_commands_for_guild(guild: discord.Guild, lang: str):
     bot.tree.add_command(create_lobby_cmd, guild=guild)
     
     await bot.tree.sync(guild=guild)
+
+async def register_steam_commands_for_guild(guild: discord.Guild, lang: str):
+    """Регистрирует команды Steam DB для сервера"""
+    
+    if not STEAM_MODULES_AVAILABLE:
+        print(f"⚠️ Steam commands not available for guild {guild.name}")
+        return
+    
+    @app_commands.command(name="steam_db", description="Get Steam game info, prices, and stats")
+    @app_commands.describe(game="Game name or Steam App ID")
+    async def steam_db_cmd(interaction: discord.Interaction, game: str):
+        if not STEAM_MODULES_AVAILABLE:
+            await interaction.response.send_message(
+                "❌ Steam features are currently unavailable",
+                ephemeral=True
+            )
+            return
+        
+        await handle_steam_db_command(
+            interaction, 
+            game, 
+            steam_history_manager,
+            redis_client=None
+        )
+    
+    bot.tree.add_command(steam_db_cmd, guild=guild)
 
 # === Command Handlers ===
 async def link_steam_handler(interaction: discord.Interaction, steam_url: str):
