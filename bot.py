@@ -13,6 +13,7 @@ import psutil
 from flask import Flask, jsonify
 from threading import Thread
 import urllib.parse
+import json
 
 # === Config ===
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
