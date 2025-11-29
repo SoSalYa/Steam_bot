@@ -234,6 +234,19 @@ CREATE TABLE IF NOT EXISTS bot_logs (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Steam UI Messages (для persistent views)
+CREATE TABLE IF NOT EXISTS steam_ui_messages (
+    message_id BIGINT PRIMARY KEY,
+    channel_id BIGINT NOT NULL,
+    guild_id BIGINT NOT NULL,
+    appid INTEGER NOT NULL,
+    user_id BIGINT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_steam_ui_expires ON steam_ui_messages(expires_at);
+CREATE INDEX IF NOT EXISTS idx_steam_ui_user ON steam_ui_messages(user_id, created_at DESC);
 -- Индексы
 CREATE INDEX IF NOT EXISTS idx_logs_level_time ON bot_logs(log_level, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_logs_module ON bot_logs(module, created_at DESC);
