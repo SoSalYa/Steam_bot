@@ -1746,6 +1746,20 @@ async def epic_free_check():
                         await ch.send(embed=embed)
                         except Exception as e:
                         print(f"Error in epic_free_check: {e}")
+
+@bot.event
+async def on_close():
+    """Cleanup при завершении бота"""
+    await close_http_session()
+    await close_redis()
+    if 'steam_background_tasks' in globals():
+        steam_background_tasks.stop_all_tasks()
+    print("Bot shutdown complete")
+
+
+if __name__ == '__main__':
+    Thread(target=run_flask, daemon=True).start()
+    bot.run(DISCORD_TOKEN)
                         
 # === Start ===
 if __name__ == '__main__':
