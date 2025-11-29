@@ -1,20 +1,28 @@
-discord.py
-gspread
-oauth2client
-requests
-flask
-beautifulsoup4
-psutil
-asyncpg==0.29.0
-aiohttp==3.9.1
+discord.py>=2.3.2
+asyncpg>=0.29.0
+aiohttp>=3.9.1
+beautifulsoup4>=4.12.2
+psutil>=5.9.0
+flask>=3.0.0
+
 # Graphs (Price History Charts)
-matplotlib==3.8.2
-numpy==1.26.2  # Required by matplotlib
-pandas==2.1.4  # Uncomment if you want advanced CSV features
-# Error Tracking (Optional but recommended)
-sentry-sdk==1.39.1  # Uncomment if using Sentry
-# Retry Logic (Optional, we built custom)
-tenacity==8.2.3  # Uncomment if you want to use tenacity instead
-black==23.12.1
-flake8==6.1.0
-mypy==1.7.1
+matplotlib>=3.8.2
+numpy>=1.26.2
+pandas>=2.1.4
+
+# Redis (Optional - для leader election и кэширования)
+redis>=5.0.0
+
+# HTML Parsing
+lxml>=4.9.3
+
+# Error Tracking (Optional)
+sentry-sdk>=1.39.1
+
+# Code Quality Tools (Dev only)
+black>=23.12.1
+flake8>=6.1.0
+mypy>=1.7.1
+
+# Dot env support
+python-dotenv>=1.0.0
