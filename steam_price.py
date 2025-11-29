@@ -27,13 +27,14 @@ class SteamPriceAPI:
         self._cache = {}
         self._cache_ttl = 3600  # 1 час для цен
     
-    async def get_price_info(self, appid: int, cc: str = 'us') -> Dict:
+    async def get_price_info(self, appid: int, cc: str = 'us', use_cache: bool = True) -> Dict:
         """
         Получает информацию о цене для указанного региона
         
         Args:
             appid: Steam App ID
             cc: Country code (us, eu, ru, ar, tr, etc.)
+            use_cache: Использовать кэш
         
         Returns:
             {
@@ -46,11 +47,13 @@ class SteamPriceAPI:
                 'discount_percent': int,
                 'currency': str,
                 'region': str,
+                'formatted_final': str,  # "$19.99"
+                'formatted_initial': str,  # "$29.99"
                 'error': str (если есть)
             }
         """
         cache_key = f"price_{appid}_{cc}"
-        if cache_key in self._cache:
+        if use_cache and cache_key in self._cache:
             cached_time, cached_data = self._cache[cache_key]
             if (datetime.utcnow() - cached_time).seconds < self._cache_ttl:
                 return cached_data
@@ -65,6 +68,8 @@ class SteamPriceAPI:
             'discount_percent': 0,
             'currency': None,
             'region': cc.upper(),
+            'formatted_final': 'N/A',
+            'formatted_initial': 'N/A',
             'error': None
         }
         
@@ -101,6 +106,8 @@ class SteamPriceAPI:
                         result['success'] = True
                         result['price_final'] = 0
                         result['price_initial'] = 0
+                        result['formatted_final'] = 'Free'
+                        result['formatted_initial'] = 'Free'
                         self._cache[cache_key] = (datetime.utcnow(), result)
                         return result
                     
@@ -116,6 +123,10 @@ class SteamPriceAPI:
                     result['discount_percent'] = price_overview.get('discount_percent', 0)
                     result['success'] = True
                     
+                    # Форматируем цены
+                    result['formatted_final'] = self.format_price(result['price_final'], result['currency'])
+                    result['formatted_initial'] = self.format_price(result['price_initial'], result['currency'])
+                    
                     # Кешируем
                     self._cache[cache_key] = (datetime.utcnow(), result)
                     
@@ -125,7 +136,7 @@ class SteamPriceAPI:
         
         return result
     
-    async def get_regional_prices(self, appid: int, regions: List[str] = None) -> List[Dict]:
+    async def get_regional_prices(self, appid: int, regions: List[str] = None) -> Dict:
         """
         Получает цены для нескольких регионов
         
@@ -134,16 +145,16 @@ class SteamPriceAPI:
             regions: Список кодов регионов (если None - все основные)
         
         Returns:
-            Список словарей с ценами для каждого региона
+            Dict[region_code, price_info]
         """
         if regions is None:
             regions = list(self.REGIONS.keys())
         
-        results = []
+        results = {}
         for region in regions:
             price_info = await self.get_price_info(appid, region)
             if price_info['success']:
-                results.append(price_info)
+                results[region] = price_info
         
         return results
     
@@ -154,7 +165,8 @@ class SteamPriceAPI:
         Returns:
             Информация о регионе с минимальной ценой
         """
-        prices = await self.get_regional_prices(appid)
+        prices_dict = await self.get_regional_prices(appid)
+        prices = list(prices_dict.values())
         
         if not prices:
             return None
@@ -166,7 +178,6 @@ class SteamPriceAPI:
             return None
         
         # Конвертируем всё в USD для сравнения (упрощенная конвертация)
-        # В реальности нужен актуальный курс
         conversion_rates = {
             'USD': 1.0,
             'EUR': 1.1,
@@ -234,9 +245,12 @@ def calculate_savings(price_initial: int, price_final: int, currency: str) -> st
     return f"Save {api.format_price(savings, currency)}"
 
 
-def compare_regional_prices(prices: List[Dict]) -> Dict:
+def compare_regional_prices(prices: Dict) -> Dict:
     """
     Сравнивает региональные цены и находит статистику
+    
+    Args:
+        prices: Dict[region_code, price_info]
     
     Returns:
         {
@@ -248,7 +262,8 @@ def compare_regional_prices(prices: List[Dict]) -> Dict:
     if not prices or len(prices) < 2:
         return {}
     
-    paid_prices = [p for p in prices if not p['is_free'] and p['price_final'] > 0]
+    prices_list = list(prices.values())
+    paid_prices = [p for p in prices_list if not p['is_free'] and p['price_final'] > 0]
     
     if not paid_prices:
         return {}
@@ -267,3 +282,7 @@ def compare_regional_prices(prices: List[Dict]) -> Dict:
         'most_expensive': most_expensive,
         'price_difference_percent': round(diff_percent, 1)
     }
+
+
+# Глобальный экземпляр
+steam_price = SteamPriceAPI()
