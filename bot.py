@@ -45,6 +45,7 @@ except ImportError as e:
     SteamPriceHistory = None
     create_history_manager = None
     handle_steam_db_command = None
+    steam_history_manager = None
 
 # === Локализация ===
 TEXTS = {
@@ -394,6 +395,11 @@ async def init_db():
             server_langs[row['guild_id']] = row['language']
     
     print("✔ Database pool created and tables verified")
+    # Инициализация Steam History Manager
+    if STEAM_MODULES_AVAILABLE and SteamPriceHistory:
+        global steam_history_manager
+        steam_history_manager = create_history_manager(db_pool)
+        print("✔ Steam History Manager initialized")
 
 async def resolve_steamid(identifier: str) -> str | None:
     if identifier.isdigit():
