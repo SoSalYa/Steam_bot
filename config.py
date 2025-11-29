@@ -21,6 +21,9 @@ class Config:
     BOT_PREFIX: str = os.getenv('BOT_PREFIX', '!')
     
     # ID каналов
+    # Channels for notifications
+    DISCOUNT_CHANNEL_ID: Optional[int] = int(os.getenv('DISCOUNT_CHANNEL_ID', 0)) or None
+    EPIC_CHANNEL_ID: Optional[int] = int(os.getenv('EPIC_CHANNEL_ID', 0)) or None
     FREEBIES_CHANNEL_ID: Optional[int] = int(os.getenv('FREEBIES_CHANNEL_ID', 0)) or None
     LOG_CHANNEL_ID: Optional[int] = int(os.getenv('LOG_CHANNEL_ID', 0)) or None
     
