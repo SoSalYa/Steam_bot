@@ -1,19 +1,67 @@
+# === Built-in imports ===
 import os
 import re
+import json
+import asyncio
+from datetime import datetime, timedelta, time as dtime
+from threading import Thread
+from typing import List, Optional
+
+# === Discord ===
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands, ui, Embed, SelectOption
-from typing import List
+
+# === Database ===
 import asyncpg
+
+# === HTTP & Parsing ===
 import aiohttp
-import asyncio
-from datetime import datetime, timedelta, time as dtime
 from bs4 import BeautifulSoup
+import urllib.parse
+
+# === Utility ===
 import psutil
 from flask import Flask, jsonify
-from threading import Thread
-import urllib.parse
-import json
+
+# === Config ===
+from config import Config
+
+# === HTTP Session Manager ===
+from http_session import HTTPSessionManager, get_http_manager, init_http_session, close_http_session
+
+# === Rate Limiting ===
+from rate_limiter import RateLimiter, steam_api_limiter, discord_api_limiter
+
+# === Redis (Optional) ===
+from redis_manager import RedisManager, get_redis_manager, init_redis, close_redis
+
+# === Cleanup ===
+from cleanup import (
+    MessageCleanup,
+    EphemeralView,
+    AutoDeleteButton,
+    send_temporary_message,
+    send_with_delete_button,
+    add_delete_button_to_view
+)
+
+# === Steam Modules ===
+from steam_online import steam_online, SteamOnlineStats
+from steam_price import steam_price, SteamPriceAPI, calculate_savings, compare_regional_prices
+from steam_history import SteamPriceHistory, create_history_manager
+from steam_db_cmd import SteamDBCommand, handle_steam_db_command
+from steamdb import SteamDBParser
+from steamdb_ui import (
+    SteamDBView,
+    toggle_tracking,
+    get_tracking_state,
+    generate_price_graph,
+    SettingsModal
+)
+
+# === Background Tasks ===
+from steam_tasks import SteamBackgroundTasks, create_background_tasks
 
 # === Config ===
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
@@ -27,25 +75,6 @@ PORT = int(os.getenv('PORT', '10000'))
 BIND_TTL_HOURS = int(os.getenv('BIND_TTL_HOURS', '24'))
 CACHE_TTL = timedelta(hours=2)
 VERIFIED_ROLE = "steam verified"
-
-# === Lazy imports для Steam модулей ===
-# Импортируются только когда нужны, чтобы не падать если модули не готовы
-try:
-    from steam_price import steam_price
-    from steam_online import steam_online
-    from steam_history import SteamPriceHistory, create_history_manager
-    from steam_db_cmd import handle_steam_db_command
-    STEAM_MODULES_AVAILABLE = True
-    print("✅ Steam modules loaded successfully")
-except ImportError as e:
-    STEAM_MODULES_AVAILABLE = False
-    print(f"⚠️ Steam modules not available: {e}")
-    steam_price = None
-    steam_online = None
-    SteamPriceHistory = None
-    create_history_manager = None
-    handle_steam_db_command = None
-    steam_history_manager = None
 
 # === Локализация ===
 TEXTS = {
@@ -1059,12 +1088,29 @@ async def game_autocomplete(
 @bot.event
 async def on_ready():
     await init_db()
-    print(f'Logged in as {bot.user}')
+    await init_http_session()  # HTTP session manager
+    await init_redis()  # Redis manager (optional)
     
-    for guild in bot.guilds:
-        bot.tree.clear_commands(guild=guild)
-        lang = server_langs.get(guild.id, 'en')
-        await register_commands_for_guild(guild, lang)
+    # Initialize cleanup manager
+    global cleanup_manager
+    cleanup_manager = MessageCleanup(bot)
+    cleanup_manager.start_cleanup_task()
+    
+    # Initialize Steam modules
+    if STEAM_MODULES_AVAILABLE and SteamPriceHistory:
+        global steam_history_manager, steam_background_tasks
+        steam_history_manager = create_history_manager(db_pool)
+        
+        # Background tasks for price updates
+        steam_background_tasks = create_background_tasks(
+            bot, 
+            db_pool, 
+            steam_history_manager,
+            notification_channel_id=config.DISCOUNT_CHANNEL_ID
+        )
+        steam_background_tasks.start_all_tasks()
+    
+    # ... rest of on_ready code
         
         # Регистрируем Steam команды если доступны
         if STEAM_MODULES_AVAILABLE:
