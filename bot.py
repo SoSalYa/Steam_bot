@@ -1415,17 +1415,28 @@ async def invite_player_handler(interaction: discord.Interaction, user: discord.
     header_url = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"
     embed.set_thumbnail(url=header_url)
     
-    # Добавляем информацию о лобби с копируемой ссылкой
+    # Добавляем информацию о лобби
     embed.add_field(
-        name="📋 " + t(gid, 'lobby_info'),
+        name="📋 Lobby Information",
         value=f"**Game:** {game_name}\n**Host:** {interaction.user.mention}",
         inline=False
     )
     
-    # Добавляем поле с копируемой ссылкой
+    # Инструкция по подключению
     embed.add_field(
-        name="🔗 Direct Link (Copy to join)",
-        value=f"```{lobby_link}```",
+        name="🔗 How to Join",
+        value=(
+            "**Option 1:** Click the button below\n"
+            "**Option 2:** Copy the link and paste it in your browser\n"
+            "**Option 3:** Press Win+R, paste the link, and press Enter"
+        ),
+        inline=False
+    )
+    
+    # Добавляем копируемую ссылку
+    embed.add_field(
+        name="📎 Direct Link",
+        value=f"`{lobby_link}`",
         inline=False
     )
     
@@ -1506,14 +1517,25 @@ async def create_lobby_handler(interaction: discord.Interaction):
     
     embed.add_field(
         name="🎮 Game Information",
-        value=f"**Game:** {game_name}\n**Host:** {interaction.user.mention}\n**Players wanted:** Looking for teammates!",
+        value=f"**Game:** {game_name}\n**Host:** {interaction.user.mention}\n**Status:** Looking for teammates!",
         inline=False
     )
     
-    # Добавляем поле с копируемой ссылкой
+    # Инструкция по подключению
     embed.add_field(
-        name="🔗 Direct Link (Copy to join)",
-        value=f"```{lobby_link}```",
+        name="🔗 How to Join",
+        value=(
+            "**1.** Click the 'Join Lobby' button below\n"
+            "**2.** Or click 'Copy Link' and paste it in your browser\n"
+            "**3.** Or press Win+R, paste the link, and hit Enter"
+        ),
+        inline=False
+    )
+    
+    # Добавляем копируемую ссылку
+    embed.add_field(
+        name="📎 Direct Link",
+        value=f"`{lobby_link}`",
         inline=False
     )
     
@@ -1535,28 +1557,25 @@ async def create_lobby_handler(interaction: discord.Interaction):
 # === Обновленный LobbyJoinView ===
 class LobbyJoinView(ui.View):
     """
-    View с кнопкой Join и кнопкой Copy Link для удобного копирования steam:// ссылки
+    View с кнопкой для присоединения к лобби через steam:// протокол
+    Использует прямую ссылку без редиректов
     """
     def __init__(self, lobby_link: str, guild_id: int, timeout: int = 900):
         super().__init__(timeout=timeout)
         self.lobby_link = lobby_link  # steam://joinlobby/...
         self.guild_id = guild_id
         
-        # Создаем HTTPS обёртку для Discord (через Steam Link Filter)
-        # Эта ссылка откроет Steam клиент и присоединит к лобби
-        safe_url = quote(lobby_link, safe='')
-        self.redirect_url = f"https://steamcommunity.com/linkfilter/?url={safe_url}"
-        
-        # Кнопка Join - открывает Steam через браузер
+        # ВАРИАНТ 1: Используем прямую steam:// ссылку
+        # Discord автоматически сделает её кликабельной в десктоп версии
         join_button = ui.Button(
-            label=t(guild_id, 'join_button'),
+            label="🎮 Join Lobby",
             style=discord.ButtonStyle.link,
-            url=self.redirect_url,
+            url=lobby_link,  # Прямая steam:// ссылка
             emoji="🎮"
         )
         self.add_item(join_button)
         
-        # Кнопка для копирования прямой ссылки
+        # Кнопка для копирования ссылки
         copy_button = ui.Button(
             label="📋 Copy Link",
             style=discord.ButtonStyle.secondary,
@@ -1566,7 +1585,87 @@ class LobbyJoinView(ui.View):
         copy_button.callback = self.copy_link_callback
         self.add_item(copy_button)
         
+        # Кнопка с инструкцией
+        help_button = ui.Button(
+            label="❓ Help",
+            style=discord.ButtonStyle.secondary,
+            custom_id="lobby_help",
+            emoji="❓"
+        )
+        help_button.callback = self.help_callback
+        self.add_item(help_button)
+        
         self.message: discord.Message | None = None
+
+    async def copy_link_callback(self, interaction: discord.Interaction):
+        """Отправляет ссылку для копирования"""
+        await interaction.response.send_message(
+            f"**📋 Copy this link:**\n\n{self.lobby_link}\n\n"
+            f"**How to use:**\n"
+            f"• Desktop: Paste in browser or Win+R\n"
+            f"• Mobile: Long press and open with Steam app",
+            ephemeral=True
+        )
+
+    async def help_callback(self, interaction: discord.Interaction):
+        """Показывает подробную инструкцию"""
+        help_embed = Embed(
+            title="❓ How to Join Steam Lobby",
+            description="There are several ways to join the lobby:",
+            color=0x0099ff
+        )
+        
+        help_embed.add_field(
+            name="🖥️ Desktop (Recommended)",
+            value=(
+                "**Method 1:** Click 'Join Lobby' button\n"
+                "**Method 2:** Click 'Copy Link', then:\n"
+                "  • Press `Win+R` (Windows) or `Cmd+Space` (Mac)\n"
+                "  • Paste the link and press Enter\n"
+                "**Method 3:** Copy link and paste in browser address bar"
+            ),
+            inline=False
+        )
+        
+        help_embed.add_field(
+            name="📱 Mobile",
+            value=(
+                "1. Click 'Copy Link'\n"
+                "2. Long press the link\n"
+                "3. Select 'Open with Steam'\n"
+                "4. Steam app will open and join the lobby"
+            ),
+            inline=False
+        )
+        
+        help_embed.add_field(
+            name="⚠️ Troubleshooting",
+            value=(
+                "• Make sure Steam is running\n"
+                "• Check you own the game\n"
+                "• Verify your Steam profile is public\n"
+                "• Try copying the link manually"
+            ),
+            inline=False
+        )
+        
+        help_embed.set_footer(text="Steam Lobby Helper")
+        
+        await interaction.response.send_message(embed=help_embed, ephemeral=True)
+
+    async def on_timeout(self):
+        """Удаляет кнопки после истечения таймаута"""
+        for item in self.children:
+            item.disabled = True
+        
+        if hasattr(self, 'message') and self.message:
+            try:
+                # Обновляем сообщение с отключенными кнопками
+                await self.message.edit(view=self)
+            except discord.NotFound:
+                pass
+            except Exception as e:
+                print(f"Error updating lobby message on timeout: {e}")
 
     async def copy_link_callback(self, interaction: discord.Interaction):
         """Отправляет ссылку в эфемерном сообщении для удобного копирования"""
