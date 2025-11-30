@@ -1668,6 +1668,76 @@ class LobbyJoinView(ui.View):
                 print(f"Error updating lobby message on timeout: {e}")
 
     async def copy_link_callback(self, interaction: discord.Interaction):
+        """Отправляет ссылку для копирования"""
+        await interaction.response.send_message(
+            f"**📋 Copy this link:**\n\n{self.lobby_link}\n\n"
+            f"**How to use:**\n"
+            f"• Desktop: Paste in browser or Win+R\n"
+            f"• Mobile: Long press and open with Steam app",
+            ephemeral=True
+        )
+
+    async def help_callback(self, interaction: discord.Interaction):
+        """Показывает подробную инструкцию"""
+        help_embed = Embed(
+            title="❓ How to Join Steam Lobby",
+            description="There are several ways to join the lobby:",
+            color=0x0099ff
+        )
+        
+        help_embed.add_field(
+            name="🖥️ Desktop (Recommended)",
+            value=(
+                "**Method 1:** Click 'Join Lobby' button\n"
+                "**Method 2:** Click 'Copy Link', then:\n"
+                "  • Press `Win+R` (Windows) or `Cmd+Space` (Mac)\n"
+                "  • Paste the link and press Enter\n"
+                "**Method 3:** Copy link and paste in browser address bar"
+            ),
+            inline=False
+        )
+        
+        help_embed.add_field(
+            name="📱 Mobile",
+            value=(
+                "1. Click 'Copy Link'\n"
+                "2. Long press the link\n"
+                "3. Select 'Open with Steam'\n"
+                "4. Steam app will open and join the lobby"
+            ),
+            inline=False
+        )
+        
+        help_embed.add_field(
+            name="⚠️ Troubleshooting",
+            value=(
+                "• Make sure Steam is running\n"
+                "• Check you own the game\n"
+                "• Verify your Steam profile is public\n"
+                "• Try copying the link manually"
+            ),
+            inline=False
+        )
+        
+        help_embed.set_footer(text="Steam Lobby Helper")
+        
+        await interaction.response.send_message(embed=help_embed, ephemeral=True)
+
+    async def on_timeout(self):
+        """Удаляет кнопки после истечения таймаута"""
+        for item in self.children:
+            item.disabled = True
+        
+        if hasattr(self, 'message') and self.message:
+            try:
+                # Обновляем сообщение с отключенными кнопками
+                await self.message.edit(view=self)
+            except discord.NotFound:
+                pass
+            except Exception as e:
+                print(f"Error updating lobby message on timeout: {e}")
+
+    async def copy_link_callback(self, interaction: discord.Interaction):
         """Отправляет ссылку в эфемерном сообщении для удобного копирования"""
         await interaction.response.send_message(
             f"**Copy this link and paste in your browser or Steam:**\n```{self.lobby_link}```\n\n"
