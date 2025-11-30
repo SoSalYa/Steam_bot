@@ -1361,6 +1361,8 @@ async def common_games_handler(interaction: discord.Interaction, user: discord.M
     view = GamesView(interaction.user, [interaction.user, user], gid)
     await view.render(interaction)
 
+from urllib.parse import quote
+
 async def invite_player_handler(interaction: discord.Interaction, user: discord.Member):
     """Отправляет личное приглашение игроку (автоматически получает лобби из профиля)"""
     gid = interaction.guild_id
@@ -1392,6 +1394,7 @@ async def invite_player_handler(interaction: discord.Interaction, user: discord.
     # Получаем информацию об игре
     appid = lobby_result['appid']
     game_name = lobby_result.get('game_name', 'Unknown Game')
+    lobby_link = lobby_result['full_link']  # steam://joinlobby/...
     
     # Пытаемся получить иконку игры из БД
     game_info = await get_game_info_by_appid(appid)
@@ -1409,17 +1412,20 @@ async def invite_player_handler(interaction: discord.Interaction, user: discord.
     )
     
     # Добавляем иконку игры
-    if icon_hash:
-        header_url = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"
-        embed.set_thumbnail(url=header_url)
-    else:
-        # Fallback на стандартную иконку
-        header_url = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"
-        embed.set_thumbnail(url=header_url)
+    header_url = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"
+    embed.set_thumbnail(url=header_url)
     
+    # Добавляем информацию о лобби с копируемой ссылкой
     embed.add_field(
         name="📋 " + t(gid, 'lobby_info'),
         value=f"**Game:** {game_name}\n**Host:** {interaction.user.mention}",
+        inline=False
+    )
+    
+    # Добавляем поле с копируемой ссылкой
+    embed.add_field(
+        name="🔗 Direct Link (Copy to join)",
+        value=f"```{lobby_link}```",
         inline=False
     )
     
@@ -1430,11 +1436,12 @@ async def invite_player_handler(interaction: discord.Interaction, user: discord.
     embed.timestamp = datetime.utcnow()
     
     # Создаем view с кнопкой присоединения
-    view = LobbyJoinView(lobby_result['full_link'], gid)
+    view = LobbyJoinView(lobby_link, gid)
     
     # Отправляем личное сообщение
     try:
-        await user.send(embed=embed, view=view)
+        sent_message = await user.send(embed=embed, view=view)
+        view.message = sent_message
         await interaction.edit_original_response(content=t(gid, 'invite_sent', user=user.mention))
     except discord.Forbidden:
         await interaction.edit_original_response(
@@ -1472,6 +1479,7 @@ async def create_lobby_handler(interaction: discord.Interaction):
     # Получаем информацию об игре
     appid = lobby_result['appid']
     game_name = lobby_result.get('game_name', 'Unknown Game')
+    lobby_link = lobby_result['full_link']  # steam://joinlobby/...
     
     # Пытаемся получить иконку игры из БД
     game_info = await get_game_info_by_appid(appid)
@@ -1502,6 +1510,13 @@ async def create_lobby_handler(interaction: discord.Interaction):
         inline=False
     )
     
+    # Добавляем поле с копируемой ссылкой
+    embed.add_field(
+        name="🔗 Direct Link (Copy to join)",
+        value=f"```{lobby_link}```",
+        inline=False
+    )
+    
     embed.set_footer(
         text=t(gid, 'lobby_by') + f" {interaction.user.display_name}", 
         icon_url=interaction.user.display_avatar.url
@@ -1509,11 +1524,72 @@ async def create_lobby_handler(interaction: discord.Interaction):
     embed.timestamp = datetime.utcnow()
     
     # Создаем view с кнопкой присоединения
-    view = LobbyJoinView(lobby_result['full_link'], gid)
+    view = LobbyJoinView(lobby_link, gid)
     
     # Отправляем в канал
-    await interaction.channel.send(embed=embed, view=view)
+    sent_message = await interaction.channel.send(embed=embed, view=view)
+    view.message = sent_message
     await interaction.edit_original_response(content=t(gid, 'lobby_created'))
+
+
+# === Обновленный LobbyJoinView ===
+class LobbyJoinView(ui.View):
+    """
+    View с кнопкой Join и кнопкой Copy Link для удобного копирования steam:// ссылки
+    """
+    def __init__(self, lobby_link: str, guild_id: int, timeout: int = 900):
+        super().__init__(timeout=timeout)
+        self.lobby_link = lobby_link  # steam://joinlobby/...
+        self.guild_id = guild_id
+        
+        # Создаем HTTPS обёртку для Discord (через Steam Link Filter)
+        # Эта ссылка откроет Steam клиент и присоединит к лобби
+        safe_url = quote(lobby_link, safe='')
+        self.redirect_url = f"https://steamcommunity.com/linkfilter/?url={safe_url}"
+        
+        # Кнопка Join - открывает Steam через браузер
+        join_button = ui.Button(
+            label=t(guild_id, 'join_button'),
+            style=discord.ButtonStyle.link,
+            url=self.redirect_url,
+            emoji="🎮"
+        )
+        self.add_item(join_button)
+        
+        # Кнопка для копирования прямой ссылки
+        copy_button = ui.Button(
+            label="📋 Copy Link",
+            style=discord.ButtonStyle.secondary,
+            custom_id="copy_lobby_link",
+            emoji="📋"
+        )
+        copy_button.callback = self.copy_link_callback
+        self.add_item(copy_button)
+        
+        self.message: discord.Message | None = None
+
+    async def copy_link_callback(self, interaction: discord.Interaction):
+        """Отправляет ссылку в эфемерном сообщении для удобного копирования"""
+        await interaction.response.send_message(
+            f"**Copy this link and paste in your browser or Steam:**\n```{self.lobby_link}```\n\n"
+            f"*This link will open Steam and join the lobby automatically*",
+            ephemeral=True
+        )
+
+    async def on_timeout(self):
+        """Удаляет сообщение после истечения таймаута"""
+        if hasattr(self, 'message') and self.message:
+            try:
+                await self.message.delete()
+                try:
+                    if self.message.id in PAGINATION_VIEWS:
+                        del PAGINATION_VIEWS[self.message.id]
+                except Exception:
+                    pass
+            except discord.NotFound:
+                pass
+            except Exception as e:
+                print(f"Error deleting lobby message on timeout: {e}")
 
 # === Global Slash Commands ===
 @bot.tree.command(name='set_language', description='Set server language (Admin only)')
