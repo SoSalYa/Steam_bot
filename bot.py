@@ -672,20 +672,47 @@ class LanguageView(ui.View):
         self.stop()
 
 # === Lobby Join View ===
+from urllib.parse import quote
+
 class LobbyJoinView(ui.View):
-    def __init__(self, lobby_link: str, guild_id: int):
-        super().__init__(timeout=None)  # Кнопка не истекает
+    """
+    View с кнопкой, которая ведёт на HTTPS-обёртку steam:// ссылки.
+    Таймаут по умолчанию 900s (15 минут) — по таймауту удаляет отправленное сообщение (если есть).
+    """
+    def __init__(self, lobby_link: str, guild_id: int, timeout: int = 900):
+        super().__init__(timeout=timeout)
         self.lobby_link = lobby_link
         self.guild_id = guild_id
-        
-        # Создаем кнопку со ссылкой
+        # https-обёртка Steam (linkfilter) — чтобы Discord корректно показывал ссылку
+        safe_url = quote(lobby_link, safe='')
+        self.redirect_url = f"https://steamcommunity.com/linkfilter/?url={safe_url}"
+
         join_button = ui.Button(
             label=t(guild_id, 'join_button'),
             style=discord.ButtonStyle.link,
-            url=lobby_link,
+            url=self.redirect_url,
             emoji="🎮"
         )
         self.add_item(join_button)
+        # message будет проставлен вызовом отправки: view.message = sent_message
+        self.message: discord.Message | None = None
+
+    async def on_timeout(self):
+        # По таймауту удаляем сообщение (если оно существует и бот имеет права)
+        if hasattr(self, 'message') and self.message:
+            try:
+                await self.message.delete()
+                # Если используется кэш PAGINATION_VIEWS — чистим его безопасно
+                try:
+                    if self.message.id in PAGINATION_VIEWS:
+                        del PAGINATION_VIEWS[self.message.id]
+                except Exception:
+                    pass
+            except discord.NotFound:
+                pass
+            except Exception as e:
+                print(f"Error deleting lobby message on timeout: {e}")
+
 
 # === Confirm View ===
 class ConfirmView(ui.View):
