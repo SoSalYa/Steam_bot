@@ -1322,110 +1322,17 @@ async def common_games_handler(interaction: discord.Interaction, user: discord.M
 
 from urllib.parse import quote
 
-async def invite_player_handler(interaction: discord.Interaction, user: discord.Member):
-    """Отправляет личное приглашение игроку (автоматически получает лобби из профиля)"""
-    gid = interaction.guild_id
-    
-    # Отправляем начальное сообщение
-    await interaction.response.send_message(t(gid, 'checking_profile'), ephemeral=True)
-    
-    # Получаем лобби из профиля пользователя
-    lobby_result = await get_lobby_from_profile(interaction.user.id)
-    
-    # Обработка ошибок
-    if not lobby_result or 'error' in lobby_result:
-        error_type = lobby_result.get('error', 'unknown') if lobby_result else 'no_profile'
-        
-        if error_type == 'no_profile':
-            return await interaction.edit_original_response(content=t(gid, 'not_verified'))
-        elif error_type == 'profile_private':
-            return await interaction.edit_original_response(content=t(gid, 'profile_private'))
-        elif error_type == 'not_in_game':
-            return await interaction.edit_original_response(content=t(gid, 'not_in_game'))
-        elif error_type == 'game_no_lobby':
-            game_name = lobby_result.get('game_name', 'Unknown')
-            return await interaction.edit_original_response(
-                content=t(gid, 'game_no_lobby').replace('{game}', game_name)
-            )
-        else:
-            return await interaction.edit_original_response(content=t(gid, 'no_lobby_found'))
-    
-    # Получаем информацию об игре
-    appid = lobby_result['appid']
-    game_name = lobby_result.get('game_name', 'Unknown Game')
-    lobby_link = lobby_result['full_link']  # steam://joinlobby/...
-    
-    # Пытаемся получить иконку игры из БД
-    game_info = await get_game_info_by_appid(appid)
-    icon_hash = game_info['icon_hash'] if game_info else ''
-    
-    # Если в БД нет, используем название из API
-    if game_info and game_info['game_name']:
-        game_name = game_info['game_name']
-    
-    # Создаем embed для приглашения
-    embed = Embed(
-        title=t(gid, 'invite_title'),
-        description=t(gid, 'invite_description', inviter=interaction.user.display_name, game=game_name),
-        color=0x1b2838
-    )
-    
-    # Добавляем иконку игры
-    header_url = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"
-    embed.set_thumbnail(url=header_url)
-    
-    # Добавляем информацию о лобби
-    embed.add_field(
-        name="📋 Lobby Information",
-        value=f"**Game:** {game_name}\n**Host:** {interaction.user.mention}",
-        inline=False
-    )
-    
-    # Инструкция по подключению
-    embed.add_field(
-        name="🔗 How to Join",
-        value=(
-            "**Option 1:** Click the button below\n"
-            "**Option 2:** Copy the link and paste it in your browser\n"
-            "**Option 3:** Press Win+R, paste the link, and press Enter"
-        ),
-        inline=False
-    )
-    
-    # Добавляем копируемую ссылку
-    embed.add_field(
-        name="📎 Direct Link",
-        value=f"`{lobby_link}`",
-        inline=False
-    )
-    
-    embed.set_footer(
-        text=t(gid, 'invitation_from') + f" {interaction.user.display_name}", 
-        icon_url=interaction.user.display_avatar.url
-    )
-    embed.timestamp = datetime.utcnow()
-    
-    # Создаем view с кнопкой присоединения
-    view = LobbyJoinView(lobby_link, gid)
-    
-    # Отправляем личное сообщение
-    try:
-        sent_message = await user.send(embed=embed, view=view)
-        view.message = sent_message
-        await interaction.edit_original_response(content=t(gid, 'invite_sent', user=user.mention))
-    except discord.Forbidden:
-        await interaction.edit_original_response(
-            content=f"❌ Could not send invitation to {user.mention}. They may have DMs disabled."
-        )
-
 async def create_lobby_handler(interaction: discord.Interaction):
     """Создает публичное объявление о лобби в канале (автоматически получает лобби)"""
     gid = interaction.guild_id
     
-    # Отправляем начальное сообщение
-    await interaction.response.send_message(t(gid, 'checking_profile'), ephemeral=True)
+    # КРИТИЧНО: Отправляем defer СРАЗУ (до любых долгих операций)
+    await interaction.response.defer(ephemeral=True)
     
-    # Получаем лобби из профиля пользователя
+    # Теперь отправляем статус (используем followup вместо response)
+    status_msg = await interaction.followup.send(t(gid, 'checking_profile'), ephemeral=True)
+    
+    # Получаем лобби из профиля пользователя (это может занять время)
     lobby_result = await get_lobby_from_profile(interaction.user.id)
     
     # Обработка ошибок
@@ -1433,18 +1340,18 @@ async def create_lobby_handler(interaction: discord.Interaction):
         error_type = lobby_result.get('error', 'unknown') if lobby_result else 'no_profile'
         
         if error_type == 'no_profile':
-            return await interaction.edit_original_response(content=t(gid, 'not_verified'))
+            return await status_msg.edit(content=t(gid, 'not_verified'))
         elif error_type == 'profile_private':
-            return await interaction.edit_original_response(content=t(gid, 'profile_private'))
+            return await status_msg.edit(content=t(gid, 'profile_private'))
         elif error_type == 'not_in_game':
-            return await interaction.edit_original_response(content=t(gid, 'not_in_game'))
+            return await status_msg.edit(content=t(gid, 'not_in_game'))
         elif error_type == 'game_no_lobby':
             game_name = lobby_result.get('game_name', 'Unknown')
-            return await interaction.edit_original_response(
+            return await status_msg.edit(
                 content=t(gid, 'game_no_lobby').replace('{game}', game_name)
             )
         else:
-            return await interaction.edit_original_response(content=t(gid, 'no_lobby_found'))
+            return await status_msg.edit(content=t(gid, 'no_lobby_found'))
     
     # Получаем информацию об игре
     appid = lobby_result['appid']
@@ -1510,8 +1417,109 @@ async def create_lobby_handler(interaction: discord.Interaction):
     # Отправляем в канал
     sent_message = await interaction.channel.send(embed=embed, view=view)
     view.message = sent_message
-    await interaction.edit_original_response(content=t(gid, 'lobby_created'))
+    
+    # Обновляем статусное сообщение
+    await status_msg.edit(content=t(gid, 'lobby_created'))
 
+
+async def invite_player_handler(interaction: discord.Interaction, user: discord.Member):
+    """Отправляет личное приглашение игроку (автоматически получает лобби из профиля)"""
+    gid = interaction.guild_id
+    
+    # КРИТИЧНО: Отправляем defer СРАЗУ
+    await interaction.response.defer(ephemeral=True)
+    
+    # Отправляем статус
+    status_msg = await interaction.followup.send(t(gid, 'checking_profile'), ephemeral=True)
+    
+    # Получаем лобби из профиля пользователя
+    lobby_result = await get_lobby_from_profile(interaction.user.id)
+    
+    # Обработка ошибок
+    if not lobby_result or 'error' in lobby_result:
+        error_type = lobby_result.get('error', 'unknown') if lobby_result else 'no_profile'
+        
+        if error_type == 'no_profile':
+            return await status_msg.edit(content=t(gid, 'not_verified'))
+        elif error_type == 'profile_private':
+            return await status_msg.edit(content=t(gid, 'profile_private'))
+        elif error_type == 'not_in_game':
+            return await status_msg.edit(content=t(gid, 'not_in_game'))
+        elif error_type == 'game_no_lobby':
+            game_name = lobby_result.get('game_name', 'Unknown')
+            return await status_msg.edit(
+                content=t(gid, 'game_no_lobby').replace('{game}', game_name)
+            )
+        else:
+            return await status_msg.edit(content=t(gid, 'no_lobby_found'))
+    
+    # Получаем информацию об игре
+    appid = lobby_result['appid']
+    game_name = lobby_result.get('game_name', 'Unknown Game')
+    lobby_link = lobby_result['full_link']  # steam://joinlobby/...
+    
+    # Пытаемся получить иконку игры из БД
+    game_info = await get_game_info_by_appid(appid)
+    icon_hash = game_info['icon_hash'] if game_info else ''
+    
+    # Если в БД нет, используем название из API
+    if game_info and game_info['game_name']:
+        game_name = game_info['game_name']
+    
+    # Создаем embed для приглашения
+    embed = Embed(
+        title=t(gid, 'invite_title'),
+        description=t(gid, 'invite_description', inviter=interaction.user.display_name, game=game_name),
+        color=0x1b2838
+    )
+    
+    # Добавляем иконку игры
+    header_url = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"
+    embed.set_thumbnail(url=header_url)
+    
+    # Добавляем информацию о лобби
+    embed.add_field(
+        name="📋 Lobby Information",
+        value=f"**Game:** {game_name}\n**Host:** {interaction.user.mention}",
+        inline=False
+    )
+    
+    # Инструкция по подключению
+    embed.add_field(
+        name="🔗 How to Join",
+        value=(
+            "**Option 1:** Click the button below\n"
+            "**Option 2:** Copy the link and paste it in your browser\n"
+            "**Option 3:** Press Win+R, paste the link, and press Enter"
+        ),
+        inline=False
+    )
+    
+    # Добавляем копируемую ссылку
+    embed.add_field(
+        name="📎 Direct Link",
+        value=f"`{lobby_link}`",
+        inline=False
+    )
+    
+    embed.set_footer(
+        text=t(gid, 'invitation_from') + f" {interaction.user.display_name}", 
+        icon_url=interaction.user.display_avatar.url
+    )
+    embed.timestamp = datetime.utcnow()
+    
+    # Создаем view с кнопкой присоединения
+    view = LobbyJoinView(lobby_link, gid)
+    
+    # Отправляем личное сообщение
+    try:
+        sent_message = await user.send(embed=embed, view=view)
+        view.message = sent_message
+        await status_msg.edit(content=t(gid, 'invite_sent', user=user.mention))
+    except discord.Forbidden:
+        await status_msg.edit(
+            content=f"❌ Could not send invitation to {user.mention}. They may have DMs disabled."
+        )
 
 # === Обновленный LobbyJoinView ===
 class LobbyJoinView(ui.View):
