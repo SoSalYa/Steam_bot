@@ -333,9 +333,32 @@ def t(guild_id: int, key: str, **kwargs) -> str:
 
 async def init_db():
     global db_pool
-    db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
+    
+    try:
+        print(f"Connecting to database...")
+        db_pool = await asyncpg.create_pool(
+            DATABASE_URL, 
+            min_size=2, 
+            max_size=10,
+            command_timeout=60
+        )
+        print("✓ Database pool created")
+    except Exception as e:
+        print(f"✗ Failed to create database pool: {e}")
+        print(f"DATABASE_URL format: {DATABASE_URL[:20]}...")
+        raise
     
     async with db_pool.acquire() as conn:
+        # Создаём таблицу профилей
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS profiles (
+                discord_id BIGINT PRIMARY KEY,
+                steam_url TEXT,
+                last_bound TIMESTAMP
+            )
+        ''')
+        
+        # Создаём таблицу игр
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS games (
                 discord_id BIGINT,
@@ -352,12 +375,30 @@ async def init_db():
         except:
             pass
         
+        # Создаём таблицу настроек серверов
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS server_settings (
                 guild_id BIGINT PRIMARY KEY,
                 language TEXT DEFAULT 'en'
             )
         ''')
+        
+        # Создаём таблицу для отправленных скидок Steam
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS sent_sales (
+                game_link TEXT PRIMARY KEY,
+                discount_end TIMESTAMP
+            )
+        ''')
+        
+        # Создаём таблицу для бесплатных игр Epic
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS sent_epic (
+                game_title TEXT PRIMARY KEY,
+                offer_end TIMESTAMP
+            )
+        ''')
+        
         rows = await conn.fetch('SELECT guild_id, language FROM server_settings')
         for row in rows:
             server_langs[row['guild_id']] = row['language']
