@@ -666,6 +666,75 @@ async def get_featured_games() -> List[Dict]:
     
     return []
 
+async def get_featured_categories() -> List[Dict]:
+    """Получает игры из featured categories (где часто бывают 100% скидки)"""
+    url = 'https://store.steampowered.com/api/featuredcategories/'
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    games = []
+                    
+                    # Проверяем разные категории
+                    for category in ['specials', 'coming_soon', 'top_sellers', 'new_releases']:
+                        if category in data:
+                            items = data[category].get('items', [])
+                            games.extend(items)
+                    
+                    return games
+    except Exception as e:
+        print(f"Error fetching featured categories: {e}")
+    
+    return []
+
+async def search_free_weekend_games() -> List[Dict]:
+    """Ищет игры с бесплатными выходными через поиск Steam"""
+    search_url = 'https://store.steampowered.com/search/results/'
+    params = {
+        'query': '',
+        'start': 0,
+        'count': 50,
+        'dynamic_data': '',
+        'sort_by': '_ASC',
+        'maxprice': 'free',
+        'specials': 1,
+        'snr': '1_7_7_230_7',
+        'infinite': 1
+    }
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(search_url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    results = data.get('results_html', '')
+                    
+                    if not results:
+                        return []
+                    
+                    # Парсим HTML результатов поиска
+                    soup = BeautifulSoup(results, 'html.parser')
+                    games = []
+                    
+                    for item in soup.select('a[data-ds-appid]'):
+                        try:
+                            appid = int(item.get('data-ds-appid', 0))
+                            
+                            # Проверяем наличие скидки
+                            discount_elem = item.select_one('.discount_pct')
+                            if discount_elem and '-100%' in discount_elem.text:
+                                games.append({'id': appid})
+                        except:
+                            continue
+                    
+                    return games
+    except Exception as e:
+        print(f"Error searching free weekend games: {e}")
+    
+    return []
+
 async def get_app_details(appid: int) -> Dict:
     """Получает детальную информацию об игре"""
     url = f'https://store.steampowered.com/api/appdetails?appids={appid}&cc=us&l=english'
@@ -684,41 +753,73 @@ async def get_app_details(appid: int) -> Dict:
 
 async def check_free_promotions() -> List[Dict]:
     """Проверяет игры со 100% скидкой (временно бесплатные)"""
+    print("Checking multiple sources for 100% discounts...")
+    
+    all_games = []
+    checked_appids = set()
+    
+    # Источник 1: Featured games
+    print("  - Checking featured games...")
     featured = await get_featured_games()
+    all_games.extend(featured)
+    
+    # Источник 2: Featured categories
+    print("  - Checking featured categories...")
+    categories = await get_featured_categories()
+    all_games.extend(categories)
+    
+    # Источник 3: Поиск по бесплатным играм со скидками
+    print("  - Checking search results...")
+    search_results = await search_free_weekend_games()
+    all_games.extend(search_results)
+    
+    print(f"  - Total games found: {len(all_games)}")
+    
     free_games = []
     
-    for game in featured:
+    for game in all_games:
         appid = game.get('id')
-        if not appid:
+        if not appid or appid in checked_appids:
             continue
         
+        checked_appids.add(appid)
+        
+        # Проверяем скидку из данных поиска (если есть)
         discount_percent = game.get('discount_percent', 0)
         
-        if discount_percent == 100:
+        # Если скидка 100% или нужно проверить детали
+        if discount_percent == 100 or discount_percent == 0:
+            print(f"  - Checking details for appid {appid}...")
             details = await get_app_details(appid)
             
             if details:
+                # Проверяем что это именно временная акция, а не F2P игра
                 is_free = details.get('is_free', False)
                 price_overview = details.get('price_overview', {})
                 
+                # Если игра обычно платная, но сейчас бесплатна
                 if not is_free and price_overview:
                     final_price = price_overview.get('final', 0)
                     initial_price = price_overview.get('initial', 0)
+                    discount = price_overview.get('discount_percent', 0)
                     
-                    if final_price == 0 and initial_price > 0:
+                    if (final_price == 0 and initial_price > 0) or discount == 100:
+                        game_name = details.get('name', 'Unknown')
+                        print(f"  ✓ Found 100% discount: {game_name}")
+                        
                         free_games.append({
                             'appid': appid,
-                            'name': details.get('name', 'Unknown'),
+                            'name': game_name,
                             'original_price': initial_price / 100,
                             'header_image': details.get('header_image', ''),
                             'short_description': details.get('short_description', ''),
                             'url': f"https://store.steampowered.com/app/{appid}"
                         })
-                        
-                        print(f"Found 100% discount: {details.get('name')}")
             
+            # Задержка между запросами к API
             await asyncio.sleep(1.5)
     
+    print(f"  ✓ Total 100% discount games found: {len(free_games)}")
     return free_games
 
 # === Views and UI Components ===
