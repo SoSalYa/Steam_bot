@@ -7,11 +7,17 @@ from typing import List, Dict
 import asyncpg
 import aiohttp
 import asyncio
-from datetime import datetime, timedelta, time as dtime
+from datetime import datetime, timedelta, time as dtime, timezone
 from bs4 import BeautifulSoup
 import psutil
 from flask import Flask, jsonify
 from threading import Thread
+import time
+
+# === Helper function for UTC time ===
+def utcnow():
+    """Возвращает текущее время в UTC (заменяет устаревший datetime.utcnow())"""
+    return datetime.now(timezone.utc)
 
 # === Config ===
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
@@ -315,10 +321,22 @@ server_langs = {}
 
 # === Flask Keep-Alive ===
 app = Flask(__name__)
+bot_ready = False
 
 @app.route('/')
 def index():
-    return jsonify(status='ok')
+    return jsonify({
+        'status': 'ok',
+        'bot_ready': bot_ready,
+        'timestamp': utcnow().isoformat()
+    })
+
+@app.route('/health')
+def health():
+    return jsonify({
+        'status': 'healthy' if bot_ready else 'starting',
+        'uptime': time.time()
+    })
 
 def run_flask():
     app.run(host='0.0.0.0', port=PORT)
@@ -333,23 +351,9 @@ def t(guild_id: int, key: str, **kwargs) -> str:
 
 async def init_db():
     global db_pool
-    
-    try:
-        print(f"Connecting to database...")
-        db_pool = await asyncpg.create_pool(
-            DATABASE_URL, 
-            min_size=2, 
-            max_size=10,
-            command_timeout=60
-        )
-        print("✓ Database pool created")
-    except Exception as e:
-        print(f"✗ Failed to create database pool: {e}")
-        print(f"DATABASE_URL format: {DATABASE_URL[:20]}...")
-        raise
+    db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10)
     
     async with db_pool.acquire() as conn:
-        # Создаём таблицу профилей
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS profiles (
                 discord_id BIGINT PRIMARY KEY,
@@ -358,7 +362,6 @@ async def init_db():
             )
         ''')
         
-        # Создаём таблицу игр
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS games (
                 discord_id BIGINT,
@@ -370,12 +373,6 @@ async def init_db():
             )
         ''')
         
-        try:
-            await conn.execute('ALTER TABLE games ADD COLUMN IF NOT EXISTS icon_hash TEXT')
-        except:
-            pass
-        
-        # Создаём таблицу настроек серверов
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS server_settings (
                 guild_id BIGINT PRIMARY KEY,
@@ -383,7 +380,6 @@ async def init_db():
             )
         ''')
         
-        # Создаём таблицу для отправленных скидок Steam
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS sent_sales (
                 game_link TEXT PRIMARY KEY,
@@ -391,7 +387,6 @@ async def init_db():
             )
         ''')
         
-        # Создаём таблицу для бесплатных игр Epic
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS sent_epic (
                 game_title TEXT PRIMARY KEY,
@@ -419,7 +414,7 @@ async def resolve_steamid(identifier: str) -> str | None:
     return None
 
 async def fetch_owned_games(steamid: str) -> dict:
-    now = datetime.utcnow()
+    now = utcnow()
     if steamid in steam_cache and now - steam_cache[steamid][0] < CACHE_TTL:
         return steam_cache[steamid][1]
     
@@ -537,7 +532,6 @@ async def get_game_info_by_appid(appid: int):
 
 def parse_lobby_link(lobby_link: str) -> dict | None:
     """Парсит Steam lobby ссылку и извлекает appid, lobby_id, steam_id"""
-    # Формат: steam://joinlobby/APPID/LOBBYID/STEAMID
     pattern = r'steam://joinlobby/(\d+)/(\d+)/(\d+)'
     match = re.match(pattern, lobby_link.strip())
     
@@ -551,11 +545,7 @@ def parse_lobby_link(lobby_link: str) -> dict | None:
     return None
 
 async def get_lobby_from_profile(discord_id: int) -> dict | None:
-    """
-    Получает активное лобби из профиля Steam пользователя
-    Возвращает dict с информацией о лобби или None
-    """
-    # Получаем Steam URL пользователя
+    """Получает активное лобби из профиля Steam пользователя"""
     profile = await get_profile(discord_id)
     if not profile:
         return {'error': 'no_profile'}
@@ -569,9 +559,7 @@ async def get_lobby_from_profile(discord_id: int) -> dict | None:
     if not steamid:
         return {'error': 'invalid_steamid'}
     
-    # Получаем информацию о текущей игре через Steam API
     async with aiohttp.ClientSession() as session:
-        # 1. Проверяем что делает пользователь (GetPlayerSummaries)
         async with session.get(
             'https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/',
             params={'key': STEAM_API_KEY, 'steamids': steamid}
@@ -587,26 +575,20 @@ async def get_lobby_from_profile(discord_id: int) -> dict | None:
             
             player = players[0]
             
-            # Проверяем приватность профиля
             if player.get('communityvisibilitystate') != 3:
                 return {'error': 'profile_private'}
             
-            # Проверяем что пользователь в игре
             if 'gameid' not in player:
                 return {'error': 'not_in_game'}
             
             appid = int(player['gameid'])
             game_name = player.get('gameextrainfo', 'Unknown Game')
         
-        # 2. Пытаемся получить информацию о лобби через Rich Presence
-        # Парсим HTML страницу профиля для получения lobby данных
         try:
             async with session.get(steam_url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.ok:
                     html = await resp.text()
                     
-                    # Ищем rich presence данные с информацией о лобби
-                    # Паттерн для поиска steam://joinlobby/ ссылок
                     lobby_pattern = r'steam://joinlobby/(\d+)/(\d+)/(\d+)'
                     match = re.search(lobby_pattern, html)
                     
@@ -615,7 +597,6 @@ async def get_lobby_from_profile(discord_id: int) -> dict | None:
                         lobby_id = match.group(2)
                         lobby_steamid = match.group(3)
                         
-                        # Проверяем что appid совпадает
                         if lobby_appid == appid:
                             return {
                                 'appid': appid,
@@ -627,7 +608,6 @@ async def get_lobby_from_profile(discord_id: int) -> dict | None:
         except Exception as e:
             print(f"Error parsing profile for lobby: {e}")
         
-        # 3. Альтернативный способ - через JavaScript данные профиля
         try:
             async with session.get(
                 f'https://steamcommunity.com/profiles/{steamid}',
@@ -636,7 +616,6 @@ async def get_lobby_from_profile(discord_id: int) -> dict | None:
                 if resp.ok:
                     html = await resp.text()
                     
-                    # Ищем в JavaScript данных
                     js_pattern = r'g_rgProfileData\s*=\s*({[^;]+});'
                     js_match = re.search(js_pattern, html)
                     
@@ -645,14 +624,12 @@ async def get_lobby_from_profile(discord_id: int) -> dict | None:
                             import json
                             profile_data = json.loads(js_match.group(1))
                             
-                            # Проверяем наличие lobby в rich presence
                             if 'rich_presence' in profile_data:
                                 rp = profile_data['rich_presence']
                                 if 'steam_display' in rp and 'joinable' in rp.get('steam_display', '').lower():
-                                    # Строим ссылку на лобби
                                     return {
                                         'appid': appid,
-                                        'lobby_id': '0',  # Placeholder
+                                        'lobby_id': '0',
                                         'steam_id': steamid,
                                         'full_link': f'steam://joinlobby/{appid}/0/{steamid}',
                                         'game_name': game_name
@@ -662,7 +639,6 @@ async def get_lobby_from_profile(discord_id: int) -> dict | None:
         except Exception as e:
             print(f"Error getting rich presence: {e}")
         
-        # Если ничего не нашли, но пользователь в игре
         return {'error': 'game_no_lobby', 'game_name': game_name, 'appid': appid}
 
 async def set_server_lang(guild_id: int, lang: str):
@@ -674,6 +650,78 @@ async def set_server_lang(guild_id: int, lang: str):
             ON CONFLICT (guild_id) DO UPDATE SET language = $2
         ''', guild_id, lang)
 
+# === Steam Discount API Functions ===
+async def get_featured_games() -> List[Dict]:
+    """Получает список featured игр через Steam API"""
+    url = 'https://store.steampowered.com/api/featured/'
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get('specials', {}).get('items', [])
+    except Exception as e:
+        print(f"Error fetching featured games: {e}")
+    
+    return []
+
+async def get_app_details(appid: int) -> Dict:
+    """Получает детальную информацию об игре"""
+    url = f'https://store.steampowered.com/api/appdetails?appids={appid}&cc=us&l=english'
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if str(appid) in data and data[str(appid)].get('success'):
+                        return data[str(appid)].get('data', {})
+    except Exception as e:
+        print(f"Error fetching app {appid} details: {e}")
+    
+    return {}
+
+async def check_free_promotions() -> List[Dict]:
+    """Проверяет игры со 100% скидкой (временно бесплатные)"""
+    featured = await get_featured_games()
+    free_games = []
+    
+    for game in featured:
+        appid = game.get('id')
+        if not appid:
+            continue
+        
+        discount_percent = game.get('discount_percent', 0)
+        
+        if discount_percent == 100:
+            details = await get_app_details(appid)
+            
+            if details:
+                is_free = details.get('is_free', False)
+                price_overview = details.get('price_overview', {})
+                
+                if not is_free and price_overview:
+                    final_price = price_overview.get('final', 0)
+                    initial_price = price_overview.get('initial', 0)
+                    
+                    if final_price == 0 and initial_price > 0:
+                        free_games.append({
+                            'appid': appid,
+                            'name': details.get('name', 'Unknown'),
+                            'original_price': initial_price / 100,
+                            'header_image': details.get('header_image', ''),
+                            'short_description': details.get('short_description', ''),
+                            'url': f"https://store.steampowered.com/app/{appid}"
+                        })
+                        
+                        print(f"Found 100% discount: {details.get('name')}")
+            
+            await asyncio.sleep(1.5)
+    
+    return free_games
+
+# === Views and UI Components ===
 class LanguageView(ui.View):
     def __init__(self, guild_id: int):
         super().__init__(timeout=600)
@@ -712,9 +760,6 @@ class LanguageView(ui.View):
         await interaction.response.send_message(TEXTS['ua']['lang_set'], ephemeral=True)
         self.stop()
 
-
-
-# === Confirm View ===
 class ConfirmView(ui.View):
     def __init__(self, user_id: int, steam_url: str, profile_name: str, discord_name: str, guild_id: int):
         super().__init__(timeout=300)
@@ -780,7 +825,7 @@ class ConfirmView(ui.View):
             inline=False
         )
         success_embed.set_footer(text=t(self.guild_id, 'profile_linked'))
-        success_embed.timestamp = datetime.utcnow()
+        success_embed.timestamp = utcnow()
         
         await interaction.followup.send(embed=success_embed, ephemeral=True)
         self.stop()
@@ -792,10 +837,9 @@ class ConfirmView(ui.View):
         await interaction.response.send_message(t(self.guild_id, 'link_cancelled'), ephemeral=True)
         self.stop()
 
-# === Games View ===
 class GamesView(ui.View):
     def __init__(self, ctx_user: discord.Member, initial_users: List[discord.Member], guild_id: int):
-        super().__init__(timeout=900)  # 15 минут
+        super().__init__(timeout=900)
         self.ctx_user = ctx_user
         self.users = initial_users[:6]
         self.pages: List[Embed] = []
@@ -804,7 +848,7 @@ class GamesView(ui.View):
         self.guild_id = guild_id
         self.show_hours = False
         self.sort_mode = 'name'
-        self.creation_time = datetime.utcnow()
+        self.creation_time = utcnow()
         
         self.update_buttons()
 
@@ -1005,14 +1049,13 @@ class GamesView(ui.View):
                 page_num = len(self.pages) + 1
                 total_pages = max((total - 1) // per_page + 1, 1)
                 
-                # Вычисляем оставшееся время
-                elapsed = (datetime.utcnow() - self.creation_time).total_seconds()
+                elapsed = (utcnow() - self.creation_time).total_seconds()
                 remaining_minutes = max(0, int((900 - elapsed) / 60))
                 
                 emb.set_footer(
                     text=f"{t(self.guild_id, 'page', current=page_num, total=total_pages)} • Expires in {remaining_minutes}min",
                 )
-                emb.timestamp = datetime.utcnow()
+                emb.timestamp = utcnow()
                 
             else:
                 emb = Embed(
@@ -1035,555 +1078,21 @@ class GamesView(ui.View):
         
         PAGINATION_VIEWS[self.message.id] = self
 
-# === Game Autocomplete ===
-async def game_autocomplete(
-    interaction: discord.Interaction,
-    current: str,
-) -> List[app_commands.Choice[str]]:
-    """Автозаполнение для поиска игр"""
-    if not current:
-        return []
-    
-    games = await search_games_by_user(interaction.user.id, current, 25)
-    
-    return [
-        app_commands.Choice(name=game['game_name'][:100], value=game['game_name'])
-        for game in games
-    ]
-
-# === Events ===
-@bot.event
-async def on_ready():
-    await init_db()
-    print(f'Logged in as {bot.user}')
-    
-    for guild in bot.guilds:
-        bot.tree.clear_commands(guild=guild)
-        lang = server_langs.get(guild.id, 'en')
-        await register_commands_for_guild(guild, lang)
-    
-    await bot.tree.sync()
-    print("Commands synced")
-    
-    print("Starting background tasks...")
-    
-    try:
-        if not daily_link_check.is_running():
-            daily_link_check.start()
-            print("✓ daily_link_check started")
-    except Exception as e:
-        print(f"✗ Error starting daily_link_check: {e}")
-    
-    try:
-        if not discount_game_check.is_running():
-            discount_game_check.start()
-            print("✓ discount_game_check started")
-    except Exception as e:
-        print(f"✗ Error starting discount_game_check: {e}")
-    
-    try:
-        if not cleanup_old_views.is_running():
-            cleanup_old_views.start()
-            print("✓ cleanup_old_views started")
-    except Exception as e:
-        print(f"✗ Error starting cleanup_old_views: {e}")
-    
-    try:
-        if not epic_free_check.is_running():
-            epic_free_check.start()
-            print("✓ epic_free_check started")
-    except Exception as e:
-        print(f"✗ Error starting epic_free_check: {e}")
-    
-    print("All background tasks initialized")
-
-@bot.event
-async def on_guild_join(guild: discord.Guild):
-    try:
-        embed = Embed(
-            title="🎮 Steam Bot",
-            description="Thanks for adding me! Please choose the server language:\n\n"
-                        "Спасибо за добавление! Выберите язык сервера:\n\n"
-                        "Дякуємо за додавання! Оберіть мову сервера:",
-            color=0x1a9fff
-        )
-        view = LanguageView(guild.id)
-        msg = await guild.owner.send(embed=embed, view=view)
-        view.message = msg
-    except discord.Forbidden:
-        pass
-
-async def register_commands_for_guild(guild: discord.Guild, lang: str):
-    # link_steam
-    @app_commands.command(name=t(guild.id, 'cmd_link_steam'), description=t(guild.id, 'cmd_link_desc'))
-    @app_commands.describe(steam_url=t(guild.id, 'cmd_link_param'))
-    async def link_steam_cmd(interaction: discord.Interaction, steam_url: str):
-        await link_steam_handler(interaction, steam_url)
-    
-    # unlink_steam
-    @app_commands.command(name=t(guild.id, 'cmd_unlink_steam'), description=t(guild.id, 'cmd_unlink_desc'))
-    async def unlink_steam_cmd(interaction: discord.Interaction):
-        await unlink_steam_handler(interaction)
-    
-    # find_teammates с автозаполнением
-    @app_commands.command(name=t(guild.id, 'cmd_find_teammates'), description=t(guild.id, 'cmd_find_desc'))
-    @app_commands.describe(game=t(guild.id, 'cmd_find_param'))
-    @app_commands.autocomplete(game=game_autocomplete)
-    async def find_teammates_cmd(interaction: discord.Interaction, game: str):
-        await find_teammates_handler(interaction, game)
-    
-    # common_games
-    @app_commands.command(name=t(guild.id, 'cmd_common_games'), description=t(guild.id, 'cmd_common_desc'))
-    @app_commands.describe(user=t(guild.id, 'cmd_common_param'))
-    async def common_games_cmd(interaction: discord.Interaction, user: discord.Member):
-        await common_games_handler(interaction, user)
-    
-    # invite_player - личное приглашение (БЕЗ параметра lobby_link)
-    @app_commands.command(name=t(guild.id, 'cmd_invite_player'), description=t(guild.id, 'cmd_invite_desc'))
-    @app_commands.describe(user=t(guild.id, 'cmd_invite_param_user'))
-    async def invite_player_cmd(interaction: discord.Interaction, user: discord.Member):
-        await invite_player_handler(interaction, user)
-    
-    # create_lobby - серверное объявление (БЕЗ параметров)
-    @app_commands.command(name=t(guild.id, 'cmd_create_lobby'), description=t(guild.id, 'cmd_create_lobby_desc'))
-    async def create_lobby_cmd(interaction: discord.Interaction):
-        await create_lobby_handler(interaction)
-    
-    bot.tree.add_command(link_steam_cmd, guild=guild)
-    bot.tree.add_command(unlink_steam_cmd, guild=guild)
-    bot.tree.add_command(find_teammates_cmd, guild=guild)
-    bot.tree.add_command(common_games_cmd, guild=guild)
-    bot.tree.add_command(invite_player_cmd, guild=guild)
-    bot.tree.add_command(create_lobby_cmd, guild=guild)
-    
-    await bot.tree.sync(guild=guild)
-
-# === Command Handlers ===
-async def link_steam_handler(interaction: discord.Interaction, steam_url: str):
-    await interaction.response.defer(ephemeral=True)
-    gid = interaction.guild_id
-
-    profile = await get_profile(interaction.user.id)
-    
-    if profile and profile['steam_url'] == steam_url:
-        return await interaction.followup.send(t(gid, 'already_linked'), ephemeral=True)
-
-    if profile and profile['last_bound']:
-        if datetime.utcnow() - profile['last_bound'].replace(tzinfo=None) < timedelta(hours=BIND_TTL_HOURS):
-            return await interaction.followup.send(t(gid, 'cooldown', hours=BIND_TTL_HOURS), ephemeral=True)
-
-    if not STEAM_URL_REGEX.match(steam_url):
-        return await interaction.followup.send(t(gid, 'invalid_url'), ephemeral=True)
-
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(steam_url, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                if r.status != 200:
-                    return await interaction.followup.send(t(gid, 'profile_unavailable'), ephemeral=True)
-                html = await r.text()
-        except:
-            return await interaction.followup.send(t(gid, 'profile_unavailable'), ephemeral=True)
-
-    name_m = re.search(r'<title>Steam Community :: (.*?)</title>', html)
-    if not name_m:
-        name_m = re.search(r'<span class="actual_persona_name">(.*?)</span>', html)
-    if not name_m:
-        name_m = re.search(r'"personaname":"(.*?)"', html)
-    if not name_m:
-        name_m = re.search(r'<meta property="og:title" content="(.*?)"', html)
-    
-    profile_name = name_m.group(1) if name_m else interaction.user.display_name
-    profile_name = profile_name.replace('&quot;', '"').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
-    discord_name = interaction.user.display_name
-    
-    avatar_m = re.search(r'<link rel="image_src" href="(.*?)"', html)
-    avatar_url = avatar_m.group(1) if avatar_m else None
-    
-    ident = parse_steam_url(steam_url)
-    steamid = await resolve_steamid(ident) if ident else None
-    
-    game_count = 0
-    if steamid:
-        preview_games = await fetch_owned_games(steamid)
-        game_count = len(preview_games)
-    
-    embed = Embed(
-        title="🔗 " + t(gid, 'confirm_link', name=profile_name, discord_name=discord_name),
-        description=(
-            f"**Steam Profile:** `{profile_name}`\n"
-            f"**Discord User:** `{discord_name}`\n\n"
-            f"🎮 **Games found:** `{game_count}`\n\n"
-            f"*Confirm to link this profile to your Discord account*"
-        ),
-        color=0x1b2838
-    )
-    
-    if avatar_url:
-        embed.set_thumbnail(url=avatar_url)
-    
-    embed.add_field(
-        name=t(gid, 'privacy_note'),
-        value=t(gid, 'privacy_text'),
-        inline=False
-    )
-    
-    embed.set_footer(text=f"{t(gid, 'profile_info')}: {steam_url[:50]}...")
-    embed.timestamp = datetime.utcnow()
-    view = ConfirmView(interaction.user.id, steam_url, profile_name, discord_name, gid)
-    msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
-    view.message = msg
-
-async def unlink_steam_handler(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    gid = interaction.guild_id
-    
-    profile = await get_profile(interaction.user.id)
-    if not profile:
-        embed = Embed(
-            title=t(gid, 'no_profile'),
-            description=t(gid, 'no_profile_text'),
-            color=0x95a5a6
-        )
-        return await interaction.followup.send(embed=embed, ephemeral=True)
-
-    steam_url = profile['steam_url']
-    await delete_profile(interaction.user.id)
-    
-    role = discord.utils.get(interaction.guild.roles, name=VERIFIED_ROLE)
-    if role:
-        try:
-            await interaction.user.remove_roles(role)
-        except:
-            pass
-    
-    unlink_embed = Embed(
-        title=t(gid, 'profile_unlinked_title'),
-        description=(
-            f"{t(gid, 'profile_unlinked_desc')}\n\n"
-            f"**{t(gid, 'previous_profile')}:** `{steam_url[:50]}...`\n"
-            f"{t(gid, 'games_removed')}: {t(gid, 'all_synced')}\n"
-            f"{t(gid, 'role_removed')}: `{VERIFIED_ROLE}`"
-        ),
-        color=0xe74c3c
-    )
-    unlink_embed.add_field(
-        name=t(gid, 'want_relink'),
-        value=t(gid, 'relink_text'),
-        inline=False
-    )
-    unlink_embed.set_footer(text="Steam Bot • Profile unlinked")
-    unlink_embed.timestamp = datetime.utcnow()
-    
-    await interaction.followup.send(embed=unlink_embed, ephemeral=True)
-
-async def find_teammates_handler(interaction: discord.Interaction, game: str):
-    gid = interaction.guild_id
-    
-    if not await has_verified_role(interaction.user):
-        return await interaction.response.send_message(t(gid, 'not_verified'), ephemeral=True)
-    
-    await interaction.response.defer(ephemeral=True)
-    
-    rows = await get_games_by_name(game)
-    if not rows:
-        return await interaction.followup.send(t(gid, 'no_players'), ephemeral=True)
-    
-    async with db_pool.acquire() as conn:
-        game_info = await conn.fetchrow(
-            'SELECT appid, icon_hash FROM games WHERE LOWER(game_name) = LOWER($1) LIMIT 1',
-            game
-        )
-    
-    appid = game_info['appid'] if game_info else None
-    icon_hash = game_info['icon_hash'] if game_info else ''
-    
-    player_list = []
-    for idx, row in enumerate(sorted(rows, key=lambda x: x['playtime'], reverse=True), 1):
-        member = interaction.guild.get_member(row['discord_id'])
-        if member:
-            hrs = row['playtime']
-            if hrs > 500:
-                rank = "🏆"
-            elif hrs > 200:
-                rank = "💎"
-            elif hrs > 100:
-                rank = "⭐"
-            elif hrs > 50:
-                rank = "✨"
-            elif hrs > 10:
-                rank = "🎯"
-            else:
-                rank = "🆕"
-            
-            player_list.append(f"`#{idx}` {rank} {member.mention} **`{hrs}h`**")
-    
-    if appid:
-        game_url = f"https://store.steampowered.com/app/{appid}"
-        title = f"🔍 [**{game}**]({game_url})"
-    else:
-        title = f"🔍 **{game}**"
-    
-    embed = Embed(
-        title="Find Teammates",
-        description=f"{title}\n\n*{t(gid, 'found_players', count=len(player_list))}*\n\n" + "\n".join(player_list[:15]),
-        color=0x171a21
-    )
-    
-    # Добавляем картинку игры
-    if appid and icon_hash:
-        header_url = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"
-        embed.set_thumbnail(url=header_url)
-    
-    embed.add_field(
-        name=t(gid, 'ranks'),
-        value=t(gid, 'ranks_text'),
-        inline=False
-    )
-    
-    embed.set_footer(text=f"{t(gid, 'requested_by')} {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
-    embed.timestamp = datetime.utcnow()
-    
-    if len(player_list) > 15:
-        embed.add_field(
-            name=t(gid, 'note'),
-            value=t(gid, 'showing_top', total=len(player_list)),
-            inline=False
-        )
-    
-    await interaction.followup.send(embed=embed, ephemeral=True)
-
-async def common_games_handler(interaction: discord.Interaction, user: discord.Member):
-    gid = interaction.guild_id
-    
-    if not await has_verified_role(interaction.user):
-        return await interaction.response.send_message(t(gid, 'not_verified'), ephemeral=True)
-    
-    view = GamesView(interaction.user, [interaction.user, user], gid)
-    await view.render(interaction)
-
-from urllib.parse import quote
-
-async def create_lobby_handler(interaction: discord.Interaction):
-    """Создает публичное объявление о лобби в канале (автоматически получает лобби)"""
-    gid = interaction.guild_id
-    
-    # КРИТИЧНО: Отправляем defer СРАЗУ (до любых долгих операций)
-    await interaction.response.defer(ephemeral=True)
-    
-    # Теперь отправляем статус (используем followup вместо response)
-    status_msg = await interaction.followup.send(t(gid, 'checking_profile'), ephemeral=True)
-    
-    # Получаем лобби из профиля пользователя (это может занять время)
-    lobby_result = await get_lobby_from_profile(interaction.user.id)
-    
-    # Обработка ошибок
-    if not lobby_result or 'error' in lobby_result:
-        error_type = lobby_result.get('error', 'unknown') if lobby_result else 'no_profile'
-        
-        if error_type == 'no_profile':
-            return await status_msg.edit(content=t(gid, 'not_verified'))
-        elif error_type == 'profile_private':
-            return await status_msg.edit(content=t(gid, 'profile_private'))
-        elif error_type == 'not_in_game':
-            return await status_msg.edit(content=t(gid, 'not_in_game'))
-        elif error_type == 'game_no_lobby':
-            game_name = lobby_result.get('game_name', 'Unknown')
-            return await status_msg.edit(
-                content=t(gid, 'game_no_lobby').replace('{game}', game_name)
-            )
-        else:
-            return await status_msg.edit(content=t(gid, 'no_lobby_found'))
-    
-    # Получаем информацию об игре
-    appid = lobby_result['appid']
-    game_name = lobby_result.get('game_name', 'Unknown Game')
-    lobby_link = lobby_result['full_link']  # steam://joinlobby/...
-    
-    # Пытаемся получить иконку игры из БД
-    game_info = await get_game_info_by_appid(appid)
-    icon_hash = game_info['icon_hash'] if game_info else ''
-    
-    if game_info and game_info['game_name']:
-        game_name = game_info['game_name']
-    
-    # Создаем embed для объявления
-    embed = Embed(
-        title=t(gid, 'lobby_title'),
-        description=t(gid, 'lobby_description', creator=interaction.user.display_name, game=game_name),
-        color=0x00d4aa
-    )
-    
-    # Добавляем большую иконку игры
-    header_url = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"
-    embed.set_image(url=header_url)
-    
-    # Маленькая иконка в thumbnail
-    if icon_hash:
-        icon_url = f"https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/{appid}/{icon_hash}.jpg"
-        embed.set_thumbnail(url=icon_url)
-    
-    embed.add_field(
-        name="🎮 Game Information",
-        value=f"**Game:** {game_name}\n**Host:** {interaction.user.mention}\n**Status:** Looking for teammates!",
-        inline=False
-    )
-    
-    # Инструкция по подключению
-    embed.add_field(
-        name="🔗 How to Join",
-        value=(
-            "**1.** Click the 'Join Lobby' button below\n"
-            "**2.** Or click 'Copy Link' and paste it in your browser\n"
-            "**3.** Or press Win+R, paste the link, and hit Enter"
-        ),
-        inline=False
-    )
-    
-    # Добавляем копируемую ссылку
-    embed.add_field(
-        name="📎 Direct Link",
-        value=f"`{lobby_link}`",
-        inline=False
-    )
-    
-    embed.set_footer(
-        text=t(gid, 'lobby_by') + f" {interaction.user.display_name}", 
-        icon_url=interaction.user.display_avatar.url
-    )
-    embed.timestamp = datetime.utcnow()
-    
-    # Создаем view с кнопкой присоединения
-    view = LobbyJoinView(lobby_link, gid)
-    
-    # Отправляем в канал
-    sent_message = await interaction.channel.send(embed=embed, view=view)
-    view.message = sent_message
-    
-    # Обновляем статусное сообщение
-    await status_msg.edit(content=t(gid, 'lobby_created'))
-
-
-async def invite_player_handler(interaction: discord.Interaction, user: discord.Member):
-    """Отправляет личное приглашение игроку (автоматически получает лобби из профиля)"""
-    gid = interaction.guild_id
-    
-    # КРИТИЧНО: Отправляем defer СРАЗУ
-    await interaction.response.defer(ephemeral=True)
-    
-    # Отправляем статус
-    status_msg = await interaction.followup.send(t(gid, 'checking_profile'), ephemeral=True)
-    
-    # Получаем лобби из профиля пользователя
-    lobby_result = await get_lobby_from_profile(interaction.user.id)
-    
-    # Обработка ошибок
-    if not lobby_result or 'error' in lobby_result:
-        error_type = lobby_result.get('error', 'unknown') if lobby_result else 'no_profile'
-        
-        if error_type == 'no_profile':
-            return await status_msg.edit(content=t(gid, 'not_verified'))
-        elif error_type == 'profile_private':
-            return await status_msg.edit(content=t(gid, 'profile_private'))
-        elif error_type == 'not_in_game':
-            return await status_msg.edit(content=t(gid, 'not_in_game'))
-        elif error_type == 'game_no_lobby':
-            game_name = lobby_result.get('game_name', 'Unknown')
-            return await status_msg.edit(
-                content=t(gid, 'game_no_lobby').replace('{game}', game_name)
-            )
-        else:
-            return await status_msg.edit(content=t(gid, 'no_lobby_found'))
-    
-    # Получаем информацию об игре
-    appid = lobby_result['appid']
-    game_name = lobby_result.get('game_name', 'Unknown Game')
-    lobby_link = lobby_result['full_link']  # steam://joinlobby/...
-    
-    # Пытаемся получить иконку игры из БД
-    game_info = await get_game_info_by_appid(appid)
-    icon_hash = game_info['icon_hash'] if game_info else ''
-    
-    # Если в БД нет, используем название из API
-    if game_info and game_info['game_name']:
-        game_name = game_info['game_name']
-    
-    # Создаем embed для приглашения
-    embed = Embed(
-        title=t(gid, 'invite_title'),
-        description=t(gid, 'invite_description', inviter=interaction.user.display_name, game=game_name),
-        color=0x1b2838
-    )
-    
-    # Добавляем иконку игры
-    header_url = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"
-    embed.set_thumbnail(url=header_url)
-    
-    # Добавляем информацию о лобби
-    embed.add_field(
-        name="📋 Lobby Information",
-        value=f"**Game:** {game_name}\n**Host:** {interaction.user.mention}",
-        inline=False
-    )
-    
-    # Инструкция по подключению
-    embed.add_field(
-        name="🔗 How to Join",
-        value=(
-            "**Option 1:** Click the button below\n"
-            "**Option 2:** Copy the link and paste it in your browser\n"
-            "**Option 3:** Press Win+R, paste the link, and press Enter"
-        ),
-        inline=False
-    )
-    
-    # Добавляем копируемую ссылку
-    embed.add_field(
-        name="📎 Direct Link",
-        value=f"`{lobby_link}`",
-        inline=False
-    )
-    
-    embed.set_footer(
-        text=t(gid, 'invitation_from') + f" {interaction.user.display_name}", 
-        icon_url=interaction.user.display_avatar.url
-    )
-    embed.timestamp = datetime.utcnow()
-    
-    # Создаем view с кнопкой присоединения
-    view = LobbyJoinView(lobby_link, gid)
-    
-    # Отправляем личное сообщение
-    try:
-        sent_message = await user.send(embed=embed, view=view)
-        view.message = sent_message
-        await status_msg.edit(content=t(gid, 'invite_sent', user=user.mention))
-    except discord.Forbidden:
-        await status_msg.edit(
-            content=f"❌ Could not send invitation to {user.mention}. They may have DMs disabled."
-        )
-
-# === Обновленный LobbyJoinView ===
 class LobbyJoinView(ui.View):
-    """
-    View с кнопкой для присоединения к лобби через steam:// протокол
-    Использует прямую ссылку без редиректов
-    """
+    """View с кнопкой для присоединения к лобби через steam:// протокол"""
     def __init__(self, lobby_link: str, guild_id: int, timeout: int = 900):
         super().__init__(timeout=timeout)
-        self.lobby_link = lobby_link  # steam://joinlobby/...
+        self.lobby_link = lobby_link
         self.guild_id = guild_id
         
-        # ВАРИАНТ 1: Используем прямую steam:// ссылку
-        # Discord автоматически сделает её кликабельной в десктоп версии
         join_button = ui.Button(
             label="🎮 Join Lobby",
             style=discord.ButtonStyle.link,
-            url=lobby_link,  # Прямая steam:// ссылка
+            url=lobby_link,
             emoji="🎮"
         )
         self.add_item(join_button)
         
-        # Кнопка для копирования ссылки
         copy_button = ui.Button(
             label="📋 Copy Link",
             style=discord.ButtonStyle.secondary,
@@ -1593,7 +1102,6 @@ class LobbyJoinView(ui.View):
         copy_button.callback = self.copy_link_callback
         self.add_item(copy_button)
         
-        # Кнопка с инструкцией
         help_button = ui.Button(
             label="❓ Help",
             style=discord.ButtonStyle.secondary,
@@ -1668,105 +1176,501 @@ class LobbyJoinView(ui.View):
         
         if hasattr(self, 'message') and self.message:
             try:
-                # Обновляем сообщение с отключенными кнопками
                 await self.message.edit(view=self)
             except discord.NotFound:
                 pass
             except Exception as e:
                 print(f"Error updating lobby message on timeout: {e}")
 
-    async def copy_link_callback(self, interaction: discord.Interaction):
-        """Отправляет ссылку для копирования"""
-        await interaction.response.send_message(
-            f"**📋 Copy this link:**\n\n{self.lobby_link}\n\n"
-            f"**How to use:**\n"
-            f"• Desktop: Paste in browser or Win+R\n"
-            f"• Mobile: Long press and open with Steam app",
-            ephemeral=True
-        )
+# === Game Autocomplete ===
+async def game_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> List[app_commands.Choice[str]]:
+    """Автозаполнение для поиска игр"""
+    if not current:
+        return []
+    
+    games = await search_games_by_user(interaction.user.id, current, 25)
+    
+    return [
+        app_commands.Choice(name=game['game_name'][:100], value=game['game_name'])
+        for game in games
+    ]
 
-    async def help_callback(self, interaction: discord.Interaction):
-        """Показывает подробную инструкцию"""
-        help_embed = Embed(
-            title="❓ How to Join Steam Lobby",
-            description="There are several ways to join the lobby:",
-            color=0x0099ff
+# === Command Handlers ===
+async def link_steam_handler(interaction: discord.Interaction, steam_url: str):
+    await interaction.response.defer(ephemeral=True)
+    gid = interaction.guild_id
+
+    profile = await get_profile(interaction.user.id)
+    
+    if profile and profile['steam_url'] == steam_url:
+        return await interaction.followup.send(t(gid, 'already_linked'), ephemeral=True)
+
+    if profile and profile['last_bound']:
+        if utcnow() - profile['last_bound'].replace(tzinfo=None) < timedelta(hours=BIND_TTL_HOURS):
+            return await interaction.followup.send(t(gid, 'cooldown', hours=BIND_TTL_HOURS), ephemeral=True)
+
+    if not STEAM_URL_REGEX.match(steam_url):
+        return await interaction.followup.send(t(gid, 'invalid_url'), ephemeral=True)
+
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(steam_url, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                if r.status != 200:
+                    return await interaction.followup.send(t(gid, 'profile_unavailable'), ephemeral=True)
+                html = await r.text()
+        except:
+            return await interaction.followup.send(t(gid, 'profile_unavailable'), ephemeral=True)
+
+    name_m = re.search(r'<title>Steam Community :: (.*?)</title>', html)
+    if not name_m:
+        name_m = re.search(r'<span class="actual_persona_name">(.*?)</span>', html)
+    if not name_m:
+        name_m = re.search(r'"personaname":"(.*?)"', html)
+    if not name_m:
+        name_m = re.search(r'<meta property="og:title" content="(.*?)"', html)
+    
+    profile_name = name_m.group(1) if name_m else interaction.user.display_name
+    profile_name = profile_name.replace('&quot;', '"').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+    discord_name = interaction.user.display_name
+    
+    avatar_m = re.search(r'<link rel="image_src" href="(.*?)"', html)
+    avatar_url = avatar_m.group(1) if avatar_m else None
+    
+    ident = parse_steam_url(steam_url)
+    steamid = await resolve_steamid(ident) if ident else None
+    
+    game_count = 0
+    if steamid:
+        preview_games = await fetch_owned_games(steamid)
+        game_count = len(preview_games)
+    
+    embed = Embed(
+        title="🔗 " + t(gid, 'confirm_link', name=profile_name, discord_name=discord_name),
+        description=(
+            f"**Steam Profile:** `{profile_name}`\n"
+            f"**Discord User:** `{discord_name}`\n\n"
+            f"🎮 **Games found:** `{game_count}`\n\n"
+            f"*Confirm to link this profile to your Discord account*"
+        ),
+        color=0x1b2838
+    )
+    
+    if avatar_url:
+        embed.set_thumbnail(url=avatar_url)
+    
+    embed.add_field(
+        name=t(gid, 'privacy_note'),
+        value=t(gid, 'privacy_text'),
+        inline=False
+    )
+    
+    embed.set_footer(text=f"{t(gid, 'profile_info')}: {steam_url[:50]}...")
+    embed.timestamp = utcnow()
+    view = ConfirmView(interaction.user.id, steam_url, profile_name, discord_name, gid)
+    msg = await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+    view.message = msg
+
+async def unlink_steam_handler(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    gid = interaction.guild_id
+    
+    profile = await get_profile(interaction.user.id)
+    if not profile:
+        embed = Embed(
+            title=t(gid, 'no_profile'),
+            description=t(gid, 'no_profile_text'),
+            color=0x95a5a6
         )
-        
-        help_embed.add_field(
-            name="🖥️ Desktop (Recommended)",
-            value=(
-                "**Method 1:** Click 'Join Lobby' button\n"
-                "**Method 2:** Click 'Copy Link', then:\n"
-                "  • Press `Win+R` (Windows) or `Cmd+Space` (Mac)\n"
-                "  • Paste the link and press Enter\n"
-                "**Method 3:** Copy link and paste in browser address bar"
-            ),
+        return await interaction.followup.send(embed=embed, ephemeral=True)
+
+    steam_url = profile['steam_url']
+    await delete_profile(interaction.user.id)
+    
+    role = discord.utils.get(interaction.guild.roles, name=VERIFIED_ROLE)
+    if role:
+        try:
+            await interaction.user.remove_roles(role)
+        except:
+            pass
+    
+    unlink_embed = Embed(
+        title=t(gid, 'profile_unlinked_title'),
+        description=(
+            f"{t(gid, 'profile_unlinked_desc')}\n\n"
+            f"**{t(gid, 'previous_profile')}:** `{steam_url[:50]}...`\n"
+            f"{t(gid, 'games_removed')}: {t(gid, 'all_synced')}\n"
+            f"{t(gid, 'role_removed')}: `{VERIFIED_ROLE}`"
+        ),
+        color=0xe74c3c
+    )
+    unlink_embed.add_field(
+        name=t(gid, 'want_relink'),
+        value=t(gid, 'relink_text'),
+        inline=False
+    )
+    unlink_embed.set_footer(text="Steam Bot • Profile unlinked")
+    unlink_embed.timestamp = utcnow()
+    
+    await interaction.followup.send(embed=unlink_embed, ephemeral=True)
+
+async def find_teammates_handler(interaction: discord.Interaction, game: str):
+    gid = interaction.guild_id
+    
+    if not await has_verified_role(interaction.user):
+        return await interaction.response.send_message(t(gid, 'not_verified'), ephemeral=True)
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    rows = await get_games_by_name(game)
+    if not rows:
+        return await interaction.followup.send(t(gid, 'no_players'), ephemeral=True)
+    
+    async with db_pool.acquire() as conn:
+        game_info = await conn.fetchrow(
+            'SELECT appid, icon_hash FROM games WHERE LOWER(game_name) = LOWER($1) LIMIT 1',
+            game
+        )
+    
+    appid = game_info['appid'] if game_info else None
+    icon_hash = game_info['icon_hash'] if game_info else ''
+    
+    player_list = []
+    for idx, row in enumerate(sorted(rows, key=lambda x: x['playtime'], reverse=True), 1):
+        member = interaction.guild.get_member(row['discord_id'])
+        if member:
+            hrs = row['playtime']
+            if hrs > 500:
+                rank = "🏆"
+            elif hrs > 200:
+                rank = "💎"
+            elif hrs > 100:
+                rank = "⭐"
+            elif hrs > 50:
+                rank = "✨"
+            elif hrs > 10:
+                rank = "🎯"
+            else:
+                rank = "🆕"
+            
+            player_list.append(f"`#{idx}` {rank} {member.mention} **`{hrs}h`**")
+    
+    if appid:
+        game_url = f"https://store.steampowered.com/app/{appid}"
+        title = f"🔍 [**{game}**]({game_url})"
+    else:
+        title = f"🔍 **{game}**"
+    
+    embed = Embed(
+        title="Find Teammates",
+        description=f"{title}\n\n*{t(gid, 'found_players', count=len(player_list))}*\n\n" + "\n".join(player_list[:15]),
+        color=0x171a21
+    )
+    
+    if appid and icon_hash:
+        header_url = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"
+        embed.set_thumbnail(url=header_url)
+    
+    embed.add_field(
+        name=t(gid, 'ranks'),
+        value=t(gid, 'ranks_text'),
+        inline=False
+    )
+    
+    embed.set_footer(text=f"{t(gid, 'requested_by')} {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
+    embed.timestamp = utcnow()
+    
+    if len(player_list) > 15:
+        embed.add_field(
+            name=t(gid, 'note'),
+            value=t(gid, 'showing_top', total=len(player_list)),
             inline=False
         )
-        
-        help_embed.add_field(
-            name="📱 Mobile",
-            value=(
-                "1. Click 'Copy Link'\n"
-                "2. Long press the link\n"
-                "3. Select 'Open with Steam'\n"
-                "4. Steam app will open and join the lobby"
-            ),
-            inline=False
-        )
-        
-        help_embed.add_field(
-            name="⚠️ Troubleshooting",
-            value=(
-                "• Make sure Steam is running\n"
-                "• Check you own the game\n"
-                "• Verify your Steam profile is public\n"
-                "• Try copying the link manually"
-            ),
-            inline=False
-        )
-        
-        help_embed.set_footer(text="Steam Lobby Helper")
-        
-        await interaction.response.send_message(embed=help_embed, ephemeral=True)
+    
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
-    async def on_timeout(self):
-        """Удаляет кнопки после истечения таймаута"""
-        for item in self.children:
-            item.disabled = True
-        
-        if hasattr(self, 'message') and self.message:
-            try:
-                # Обновляем сообщение с отключенными кнопками
-                await self.message.edit(view=self)
-            except discord.NotFound:
-                pass
-            except Exception as e:
-                print(f"Error updating lobby message on timeout: {e}")
+async def common_games_handler(interaction: discord.Interaction, user: discord.Member):
+    gid = interaction.guild_id
+    
+    if not await has_verified_role(interaction.user):
+        return await interaction.response.send_message(t(gid, 'not_verified'), ephemeral=True)
+    
+    view = GamesView(interaction.user, [interaction.user, user], gid)
+    await view.render(interaction)
 
-    async def copy_link_callback(self, interaction: discord.Interaction):
-        """Отправляет ссылку в эфемерном сообщении для удобного копирования"""
-        await interaction.response.send_message(
-            f"**Copy this link and paste in your browser or Steam:**\n```{self.lobby_link}```\n\n"
-            f"*This link will open Steam and join the lobby automatically*",
-            ephemeral=True
+async def create_lobby_handler(interaction: discord.Interaction):
+    """Создает публичное объявление о лобби в канале (автоматически получает лобби)"""
+    gid = interaction.guild_id
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    status_msg = await interaction.followup.send(t(gid, 'checking_profile'), ephemeral=True)
+    
+    lobby_result = await get_lobby_from_profile(interaction.user.id)
+    
+    if not lobby_result or 'error' in lobby_result:
+        error_type = lobby_result.get('error', 'unknown') if lobby_result else 'no_profile'
+        
+        if error_type == 'no_profile':
+            return await status_msg.edit(content=t(gid, 'not_verified'))
+        elif error_type == 'profile_private':
+            return await status_msg.edit(content=t(gid, 'profile_private'))
+        elif error_type == 'not_in_game':
+            return await status_msg.edit(content=t(gid, 'not_in_game'))
+        elif error_type == 'game_no_lobby':
+            game_name = lobby_result.get('game_name', 'Unknown')
+            return await status_msg.edit(
+                content=t(gid, 'game_no_lobby').replace('{game}', game_name)
+            )
+        else:
+            return await status_msg.edit(content=t(gid, 'no_lobby_found'))
+    
+    appid = lobby_result['appid']
+    game_name = lobby_result.get('game_name', 'Unknown Game')
+    lobby_link = lobby_result['full_link']
+    
+    game_info = await get_game_info_by_appid(appid)
+    icon_hash = game_info['icon_hash'] if game_info else ''
+    
+    if game_info and game_info['game_name']:
+        game_name = game_info['game_name']
+    
+    embed = Embed(
+        title=t(gid, 'lobby_title'),
+        description=t(gid, 'lobby_description', creator=interaction.user.display_name, game=game_name),
+        color=0x00d4aa
+    )
+    
+    header_url = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"
+    embed.set_image(url=header_url)
+    
+    if icon_hash:
+        icon_url = f"https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/{appid}/{icon_hash}.jpg"
+        embed.set_thumbnail(url=icon_url)
+    
+    embed.add_field(
+        name="🎮 Game Information",
+        value=f"**Game:** {game_name}\n**Host:** {interaction.user.mention}\n**Status:** Looking for teammates!",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🔗 How to Join",
+        value=(
+            "**1.** Click the 'Join Lobby' button below\n"
+            "**2.** Or click 'Copy Link' and paste it in your browser\n"
+            "**3.** Or press Win+R, paste the link, and hit Enter"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="📎 Direct Link",
+        value=f"`{lobby_link}`",
+        inline=False
+    )
+    
+    embed.set_footer(
+        text=t(gid, 'lobby_by') + f" {interaction.user.display_name}", 
+        icon_url=interaction.user.display_avatar.url
+    )
+    embed.timestamp = utcnow()
+    
+    view = LobbyJoinView(lobby_link, gid)
+    
+    sent_message = await interaction.channel.send(embed=embed, view=view)
+    view.message = sent_message
+    
+    await status_msg.edit(content=t(gid, 'lobby_created'))
+
+async def invite_player_handler(interaction: discord.Interaction, user: discord.Member):
+    """Отправляет личное приглашение игроку (автоматически получает лобби из профиля)"""
+    gid = interaction.guild_id
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    status_msg = await interaction.followup.send(t(gid, 'checking_profile'), ephemeral=True)
+    
+    lobby_result = await get_lobby_from_profile(interaction.user.id)
+    
+    if not lobby_result or 'error' in lobby_result:
+        error_type = lobby_result.get('error', 'unknown') if lobby_result else 'no_profile'
+        
+        if error_type == 'no_profile':
+            return await status_msg.edit(content=t(gid, 'not_verified'))
+        elif error_type == 'profile_private':
+            return await status_msg.edit(content=t(gid, 'profile_private'))
+        elif error_type == 'not_in_game':
+            return await status_msg.edit(content=t(gid, 'not_in_game'))
+        elif error_type == 'game_no_lobby':
+            game_name = lobby_result.get('game_name', 'Unknown')
+            return await status_msg.edit(
+                content=t(gid, 'game_no_lobby').replace('{game}', game_name)
+            )
+        else:
+            return await status_msg.edit(content=t(gid, 'no_lobby_found'))
+    
+    appid = lobby_result['appid']
+    game_name = lobby_result.get('game_name', 'Unknown Game')
+    lobby_link = lobby_result['full_link']
+    
+    game_info = await get_game_info_by_appid(appid)
+    icon_hash = game_info['icon_hash'] if game_info else ''
+    
+    if game_info and game_info['game_name']:
+        game_name = game_info['game_name']
+    
+    embed = Embed(
+        title=t(gid, 'invite_title'),
+        description=t(gid, 'invite_description', inviter=interaction.user.display_name, game=game_name),
+        color=0x1b2838
+    )
+    
+    header_url = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/header.jpg"
+    embed.set_thumbnail(url=header_url)
+    
+    embed.add_field(
+        name="📋 Lobby Information",
+        value=f"**Game:** {game_name}\n**Host:** {interaction.user.mention}",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🔗 How to Join",
+        value=(
+            "**Option 1:** Click the button below\n"
+            "**Option 2:** Copy the link and paste it in your browser\n"
+            "**Option 3:** Press Win+R, paste the link, and press Enter"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="📎 Direct Link",
+        value=f"`{lobby_link}`",
+        inline=False
+    )
+    
+    embed.set_footer(
+        text=t(gid, 'invitation_from') + f" {interaction.user.display_name}", 
+        icon_url=interaction.user.display_avatar.url
+    )
+    embed.timestamp = utcnow()
+    
+    view = LobbyJoinView(lobby_link, gid)
+    
+    try:
+        sent_message = await user.send(embed=embed, view=view)
+        view.message = sent_message
+        await status_msg.edit(content=t(gid, 'invite_sent', user=user.mention))
+    except discord.Forbidden:
+        await status_msg.edit(
+            content=f"❌ Could not send invitation to {user.mention}. They may have DMs disabled."
         )
 
-    async def on_timeout(self):
-        """Удаляет сообщение после истечения таймаута"""
-        if hasattr(self, 'message') and self.message:
-            try:
-                await self.message.delete()
-                try:
-                    if self.message.id in PAGINATION_VIEWS:
-                        del PAGINATION_VIEWS[self.message.id]
-                except Exception:
-                    pass
-            except discord.NotFound:
-                pass
-            except Exception as e:
-                print(f"Error deleting lobby message on timeout: {e}")
+# === Command Registration ===
+async def register_commands_for_guild(guild: discord.Guild, lang: str):
+    @app_commands.command(name=t(guild.id, 'cmd_link_steam'), description=t(guild.id, 'cmd_link_desc'))
+    @app_commands.describe(steam_url=t(guild.id, 'cmd_link_param'))
+    async def link_steam_cmd(interaction: discord.Interaction, steam_url: str):
+        await link_steam_handler(interaction, steam_url)
+    
+    @app_commands.command(name=t(guild.id, 'cmd_unlink_steam'), description=t(guild.id, 'cmd_unlink_desc'))
+    async def unlink_steam_cmd(interaction: discord.Interaction):
+        await unlink_steam_handler(interaction)
+    
+    @app_commands.command(name=t(guild.id, 'cmd_find_teammates'), description=t(guild.id, 'cmd_find_desc'))
+    @app_commands.describe(game=t(guild.id, 'cmd_find_param'))
+    @app_commands.autocomplete(game=game_autocomplete)
+    async def find_teammates_cmd(interaction: discord.Interaction, game: str):
+        await find_teammates_handler(interaction, game)
+    
+    @app_commands.command(name=t(guild.id, 'cmd_common_games'), description=t(guild.id, 'cmd_common_desc'))
+    @app_commands.describe(user=t(guild.id, 'cmd_common_param'))
+    async def common_games_cmd(interaction: discord.Interaction, user: discord.Member):
+        await common_games_handler(interaction, user)
+    
+    @app_commands.command(name=t(guild.id, 'cmd_invite_player'), description=t(guild.id, 'cmd_invite_desc'))
+    @app_commands.describe(user=t(guild.id, 'cmd_invite_param_user'))
+    async def invite_player_cmd(interaction: discord.Interaction, user: discord.Member):
+        await invite_player_handler(interaction, user)
+    
+    @app_commands.command(name=t(guild.id, 'cmd_create_lobby'), description=t(guild.id, 'cmd_create_lobby_desc'))
+    async def create_lobby_cmd(interaction: discord.Interaction):
+        await create_lobby_handler(interaction)
+    
+    bot.tree.add_command(link_steam_cmd, guild=guild)
+    bot.tree.add_command(unlink_steam_cmd, guild=guild)
+    bot.tree.add_command(find_teammates_cmd, guild=guild)
+    bot.tree.add_command(common_games_cmd, guild=guild)
+    bot.tree.add_command(invite_player_cmd, guild=guild)
+    bot.tree.add_command(create_lobby_cmd, guild=guild)
+    
+    await bot.tree.sync(guild=guild)
+
+# === Events ===
+@bot.event
+async def on_ready():
+    global bot_ready
+    print(f'Bot logged in as {bot.user}')
+    
+    try:
+        await init_db()
+        print("✓ Database initialized")
+    except Exception as e:
+        print(f"✗ Database init error: {e}")
+        return
+    
+    print("Starting command sync...")
+    try:
+        bot.tree.clear_commands(guild=None)
+        
+        for guild in bot.guilds:
+            lang = server_langs.get(guild.id, 'en')
+            await register_commands_for_guild(guild, lang)
+        
+        await bot.tree.sync()
+        print(f"✓ Commands synced for {len(bot.guilds)} guilds")
+    except Exception as e:
+        print(f"✗ Command sync error: {e}")
+    
+    print("Starting background tasks...")
+    
+    tasks_to_start = [
+        ('daily_link_check', daily_link_check),
+        ('discount_game_check', discount_game_check),
+        ('cleanup_old_views', cleanup_old_views),
+        ('epic_free_check', epic_free_check)
+    ]
+    
+    for task_name, task in tasks_to_start:
+        try:
+            if not task.is_running():
+                task.start()
+                print(f"✓ {task_name} started")
+        except Exception as e:
+            print(f"✗ Error starting {task_name}: {e}")
+    
+    print(f"✓ Bot ready! Serving {len(bot.guilds)} guilds")
+    bot_ready = True
+
+@bot.event
+async def on_guild_join(guild: discord.Guild):
+    try:
+        embed = Embed(
+            title="🎮 Steam Bot",
+            description="Thanks for adding me! Please choose the server language:\n\n"
+                        "Спасибо за добавление! Выберите язык сервера:\n\n"
+                        "Дякуємо за додавання! Оберіть мову сервера:",
+            color=0x1a9fff
+        )
+        view = LanguageView(guild.id)
+        msg = await guild.owner.send(embed=embed, view=view)
+        view.message = msg
+    except discord.Forbidden:
+        pass
 
 # === Global Slash Commands ===
 @bot.tree.command(name='set_language', description='Set server language (Admin only)')
@@ -1785,9 +1689,45 @@ async def set_language(interaction: discord.Interaction, language: str):
     await register_commands_for_guild(interaction.guild, language)
     await interaction.followup.send("✅ Commands updated to new language!", ephemeral=True)
 
-# === Tasks ===
+@bot.tree.command(name='check_discounts', description='Manually check for 100% discounts (Admin only)')
+@app_commands.default_permissions(administrator=True)
+async def check_discounts_command(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        free_games = await check_free_promotions()
+        
+        if not free_games:
+            await interaction.followup.send(
+                "✅ Check complete - no new 100% discount games found.",
+                ephemeral=True
+            )
+            return
+        
+        games_list = "\n".join([
+            f"• **{g['name']}** (${g['original_price']:.2f})"
+            for g in free_games
+        ])
+        
+        await interaction.followup.send(
+            f"🎉 Found {len(free_games)} game(s) with 100% discount:\n\n{games_list}\n\n"
+            f"Alerts will be sent to the configured channel.",
+            ephemeral=True
+        )
+        
+        if DISCOUNT_CHANNEL_ID > 0:
+            await discount_game_check()
+        
+    except Exception as e:
+        await interaction.followup.send(
+            f"❌ Error checking discounts: {str(e)}",
+            ephemeral=True
+        )
+
+# === Background Tasks ===
 @tasks.loop(time=dtime(0, 10))
 async def daily_link_check():
+    """Ежедневная синхронизация Steam библиотек"""
     async with db_pool.acquire() as conn:
         profiles = await conn.fetch('SELECT discord_id, steam_url FROM profiles')
     
@@ -1801,83 +1741,7 @@ async def daily_link_check():
             await save_games(p['discord_id'], games)
         await asyncio.sleep(1)
 
-async def get_featured_games() -> List[Dict]:
-    """Получает список featured игр через Steam API"""
-    url = 'https://store.steampowered.com/api/featured/'
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    return data.get('specials', {}).get('items', [])
-    except Exception as e:
-        print(f"Error fetching featured games: {e}")
-    
-    return []
-
-async def get_app_details(appid: int) -> Dict:
-    """Получает детальную информацию об игре"""
-    url = f'https://store.steampowered.com/api/appdetails?appids={appid}&cc=us&l=english'
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    if str(appid) in data and data[str(appid)].get('success'):
-                        return data[str(appid)].get('data', {})
-    except Exception as e:
-        print(f"Error fetching app {appid} details: {e}")
-    
-    return {}
-
-async def check_free_promotions() -> List[Dict]:
-    """Проверяет игры со 100% скидкой (временно бесплатные)"""
-    featured = await get_featured_games()
-    free_games = []
-    
-    for game in featured:
-        appid = game.get('id')
-        if not appid:
-            continue
-        
-        # Проверяем скидку
-        discount_percent = game.get('discount_percent', 0)
-        
-        # Если скидка 100%, получаем подробности
-        if discount_percent == 100:
-            details = await get_app_details(appid)
-            
-            if details:
-                # Проверяем что это именно временная акция, а не F2P игра
-                is_free = details.get('is_free', False)
-                price_overview = details.get('price_overview', {})
-                
-                # Если игра обычно платная, но сейчас бесплатна
-                if not is_free and price_overview:
-                    final_price = price_overview.get('final', 0)
-                    initial_price = price_overview.get('initial', 0)
-                    
-                    if final_price == 0 and initial_price > 0:
-                        free_games.append({
-                            'appid': appid,
-                            'name': details.get('name', 'Unknown'),
-                            'original_price': initial_price / 100,  # Цена в долларах
-                            'header_image': details.get('header_image', ''),
-                            'short_description': details.get('short_description', ''),
-                            'url': f"https://store.steampowered.com/app/{appid}"
-                        })
-                        
-                        print(f"Found 100% discount: {details.get('name')}")
-            
-            # Задержка между запросами к API
-            await asyncio.sleep(1.5)
-    
-    return free_games
-
-
-@tasks.loop(hours=6)  # Проверка каждые 6 часов
+@tasks.loop(hours=6)
 async def discount_game_check():
     """Проверяет Steam на игры со 100% скидкой"""
     ch = bot.get_channel(DISCOUNT_CHANNEL_ID)
@@ -1895,7 +1759,6 @@ async def discount_game_check():
             return
         
         async with db_pool.acquire() as conn:
-            # Получаем уже отправленные игры
             existing = {
                 r['game_link'] 
                 for r in await conn.fetch('SELECT game_link FROM sent_sales')
@@ -1906,18 +1769,15 @@ async def discount_game_check():
             for game in free_games:
                 game_url = game['url']
                 
-                # Пропускаем если уже отправляли
                 if game_url in existing:
                     continue
                 
-                # Сохраняем в БД
                 await conn.execute('''
                     INSERT INTO sent_sales (game_link, discount_end) 
                     VALUES ($1, NOW() + interval '14 days') 
                     ON CONFLICT DO NOTHING
                 ''', game_url)
                 
-                # Создаём embed
                 embed = Embed(
                     title="🎉 FREE TO KEEP - 100% OFF!",
                     description=(
@@ -1936,14 +1796,13 @@ async def discount_game_check():
                 embed.set_footer(
                     text="Steam 100% Discount Alert • Claim before it ends!"
                 )
-                embed.timestamp = datetime.utcnow()
+                embed.timestamp = utcnow()
                 
                 try:
                     await ch.send(embed=embed)
                     sent_count += 1
                     print(f"✓ Sent alert for: {game['name']}")
                     
-                    # Задержка между отправкой сообщений
                     await asyncio.sleep(2)
                     
                 except Exception as e:
@@ -1956,13 +1815,11 @@ async def discount_game_check():
         print(f"Error in discount_game_check: {e}")
         import traceback
         traceback.print_exc()
-    
-    
 
 @tasks.loop(hours=1)
 async def cleanup_old_views():
     """Очищает устаревшие views из кэша"""
-    current_time = datetime.utcnow()
+    current_time = utcnow()
     to_remove = []
     
     for msg_id, view in PAGINATION_VIEWS.items():
@@ -1982,6 +1839,7 @@ async def cleanup_old_views():
 
 @tasks.loop(hours=6)
 async def epic_free_check():
+    """Проверяет бесплатные игры в Epic Games Store"""
     ch = bot.get_channel(EPIC_CHANNEL_ID)
     if not ch:
         return
@@ -2008,7 +1866,7 @@ async def epic_free_check():
                     if o.get('discountSetting', {}).get('discountPercentage') == 0:
                         await conn.execute(
                             'INSERT INTO sent_epic (game_title, offer_end) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-                            title, datetime.utcnow() + timedelta(days=7)
+                            title, utcnow() + timedelta(days=7)
                         )
                         slug = game.get('productSlug') or game.get('catalogNs', {}).get('mappings', [{}])[0].get('pageSlug')
                         url = f"https://www.epicgames.com/store/p/{slug}" if slug else ""
