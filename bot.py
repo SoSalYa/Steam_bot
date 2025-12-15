@@ -793,28 +793,35 @@ async def check_free_promotions() -> List[Dict]:
             details = await get_app_details(appid)
             
             if details:
-                # Проверяем что это именно временная акция, а не F2P игра
-                is_free = details.get('is_free', False)
                 price_overview = details.get('price_overview', {})
                 
-                # Если игра обычно платная, но сейчас бесплатна
-                if not is_free and price_overview:
+                # Проверяем наличие информации о цене
+                if price_overview:
                     final_price = price_overview.get('final', 0)
                     initial_price = price_overview.get('initial', 0)
                     discount = price_overview.get('discount_percent', 0)
                     
-                    if (final_price == 0 and initial_price > 0) or discount == 100:
+                    # КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Игра временно бесплатна если:
+                    # 1. Скидка 100% ИЛИ
+                    # 2. Финальная цена 0, но изначальная цена > 0
+                    if discount == 100 or (final_price == 0 and initial_price > 0):
                         game_name = details.get('name', 'Unknown')
-                        print(f"  ✓ Found 100% discount: {game_name}")
                         
-                        free_games.append({
-                            'appid': appid,
-                            'name': game_name,
-                            'original_price': initial_price / 100,
-                            'header_image': details.get('header_image', ''),
-                            'short_description': details.get('short_description', ''),
-                            'url': f"https://store.steampowered.com/app/{appid}"
-                        })
+                        # ВАЖНО: Проверяем что это не постоянно F2P игра
+                        # F2P игры обычно НЕ имеют initial_price или он равен 0
+                        if initial_price > 0:
+                            print(f"  ✓ Found 100% discount: {game_name} (was ${initial_price/100:.2f})")
+                            
+                            free_games.append({
+                                'appid': appid,
+                                'name': game_name,
+                                'original_price': initial_price / 100,
+                                'header_image': details.get('header_image', ''),
+                                'short_description': details.get('short_description', ''),
+                                'url': f"https://store.steampowered.com/app/{appid}"
+                            })
+                        else:
+                            print(f"  ⊘ Skipped {game_name} - F2P game (no original price)")
             
             # Задержка между запросами к API
             await asyncio.sleep(1.5)
@@ -1727,23 +1734,6 @@ async def set_language(interaction: discord.Interaction, language: str):
     bot.tree.clear_commands(guild=interaction.guild)
     await register_commands_for_guild(interaction.guild, language)
     await interaction.followup.send("✅ Commands updated to new language!", ephemeral=True)
-
-@bot.tree.command(name='check_game', description='Check specific game discount')
-@app_commands.describe(appid='Steam App ID')
-async def check_game(interaction: discord.Interaction, appid: int):
-    await interaction.response.defer(ephemeral=True)
-    
-    details = await get_app_details(appid)
-    
-    if details:
-        info = (
-            f"**{details.get('name', 'Unknown')}**\n\n"
-            f"Is Free: {details.get('is_free', False)}\n"
-            f"Price Overview: {details.get('price_overview', 'None')}\n"
-        )
-        await interaction.followup.send(info, ephemeral=True)
-    else:
-        await interaction.followup.send("Could not fetch game details", ephemeral=True)
 
 @bot.tree.command(name='check_discounts', description='Manually check for 100% discounts (Admin only)')
 @app_commands.default_permissions(administrator=True)
