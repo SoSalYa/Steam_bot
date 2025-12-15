@@ -1610,69 +1610,7 @@ async def register_commands_for_guild(guild: discord.Guild, lang: str):
     
     await bot.tree.sync(guild=guild)
 
-# === Events ===
-@bot.event
-async def on_ready():
-    global bot_ready
-    print(f'Bot logged in as {bot.user}')
-    
-    try:
-        await init_db()
-        print("✓ Database initialized")
-    except Exception as e:
-        print(f"✗ Database init error: {e}")
-        return
-    
-    print("Starting command sync...")
-    try:
-        bot.tree.clear_commands(guild=None)
-        
-        for guild in bot.guilds:
-            lang = server_langs.get(guild.id, 'en')
-            await register_commands_for_guild(guild, lang)
-        
-        await bot.tree.sync()
-        print(f"✓ Commands synced for {len(bot.guilds)} guilds")
-    except Exception as e:
-        print(f"✗ Command sync error: {e}")
-    
-    print("Starting background tasks...")
-    
-    tasks_to_start = [
-        ('daily_link_check', daily_link_check),
-        ('discount_game_check', discount_game_check),
-        ('cleanup_old_views', cleanup_old_views),
-        ('epic_free_check', epic_free_check)
-    ]
-    
-    for task_name, task in tasks_to_start:
-        try:
-            if not task.is_running():
-                task.start()
-                print(f"✓ {task_name} started")
-        except Exception as e:
-            print(f"✗ Error starting {task_name}: {e}")
-    
-    print(f"✓ Bot ready! Serving {len(bot.guilds)} guilds")
-    bot_ready = True
-
-@bot.event
-async def on_guild_join(guild: discord.Guild):
-    try:
-        embed = Embed(
-            title="🎮 Steam Bot",
-            description="Thanks for adding me! Please choose the server language:\n\n"
-                        "Спасибо за добавление! Выберите язык сервера:\n\n"
-                        "Дякуємо за додавання! Оберіть мову сервера:",
-            color=0x1a9fff
-        )
-        view = LanguageView(guild.id)
-        msg = await guild.owner.send(embed=embed, view=view)
-        view.message = msg
-    except discord.Forbidden:
-        pass
-
-# === Global Slash Commands ===
+# === Global Slash Commands (Register BEFORE on_ready) ===
 @bot.tree.command(name='set_language', description='Set server language (Admin only)')
 @app_commands.describe(language='Language / Язык')
 @app_commands.choices(language=[
@@ -1723,6 +1661,71 @@ async def check_discounts_command(interaction: discord.Interaction):
             f"❌ Error checking discounts: {str(e)}",
             ephemeral=True
         )
+
+# === Events ===
+@bot.event
+async def on_ready():
+    global bot_ready
+    print(f'Bot logged in as {bot.user}')
+    
+    try:
+        await init_db()
+        print("✓ Database initialized")
+    except Exception as e:
+        print(f"✗ Database init error: {e}")
+        return
+    
+    print("Starting command sync...")
+    try:
+        # Синхронизируем глобальные команды
+        print("Syncing global commands...")
+        await bot.tree.sync()
+        print("✓ Global commands synced")
+        
+        # Регистрируем команды для каждого сервера
+        for guild in bot.guilds:
+            lang = server_langs.get(guild.id, 'en')
+            await register_commands_for_guild(guild, lang)
+        
+        print(f"✓ Commands synced for {len(bot.guilds)} guilds")
+    except Exception as e:
+        print(f"✗ Command sync error: {e}")
+    
+    print("Starting background tasks...")
+    
+    tasks_to_start = [
+        ('daily_link_check', daily_link_check),
+        ('discount_game_check', discount_game_check),
+        ('cleanup_old_views', cleanup_old_views),
+        ('epic_free_check', epic_free_check)
+    ]
+    
+    for task_name, task in tasks_to_start:
+        try:
+            if not task.is_running():
+                task.start()
+                print(f"✓ {task_name} started")
+        except Exception as e:
+            print(f"✗ Error starting {task_name}: {e}")
+    
+    print(f"✓ Bot ready! Serving {len(bot.guilds)} guilds")
+    bot_ready = True
+
+@bot.event
+async def on_guild_join(guild: discord.Guild):
+    try:
+        embed = Embed(
+            title="🎮 Steam Bot",
+            description="Thanks for adding me! Please choose the server language:\n\n"
+                        "Спасибо за добавление! Выберите язык сервера:\n\n"
+                        "Дякуємо за додавання! Оберіть мову сервера:",
+            color=0x1a9fff
+        )
+        view = LanguageView(guild.id)
+        msg = await guild.owner.send(embed=embed, view=view)
+        view.message = msg
+    except discord.Forbidden:
+        pass
 
 # === Background Tasks ===
 @tasks.loop(time=dtime(0, 10))
