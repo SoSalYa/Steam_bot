@@ -3,7 +3,7 @@ import re
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands, ui, Embed, SelectOption
-from typing import List
+from typing import List, Dict
 import asyncpg
 import aiohttp
 import asyncio
@@ -1801,75 +1801,163 @@ async def daily_link_check():
             await save_games(p['discord_id'], games)
         await asyncio.sleep(1)
 
-@tasks.loop(hours=12)
+async def get_featured_games() -> List[Dict]:
+    """Получает список featured игр через Steam API"""
+    url = 'https://store.steampowered.com/api/featured/'
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get('specials', {}).get('items', [])
+    except Exception as e:
+        print(f"Error fetching featured games: {e}")
+    
+    return []
+
+async def get_app_details(appid: int) -> Dict:
+    """Получает детальную информацию об игре"""
+    url = f'https://store.steampowered.com/api/appdetails?appids={appid}&cc=us&l=english'
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if str(appid) in data and data[str(appid)].get('success'):
+                        return data[str(appid)].get('data', {})
+    except Exception as e:
+        print(f"Error fetching app {appid} details: {e}")
+    
+    return {}
+
+async def check_free_promotions() -> List[Dict]:
+    """Проверяет игры со 100% скидкой (временно бесплатные)"""
+    featured = await get_featured_games()
+    free_games = []
+    
+    for game in featured:
+        appid = game.get('id')
+        if not appid:
+            continue
+        
+        # Проверяем скидку
+        discount_percent = game.get('discount_percent', 0)
+        
+        # Если скидка 100%, получаем подробности
+        if discount_percent == 100:
+            details = await get_app_details(appid)
+            
+            if details:
+                # Проверяем что это именно временная акция, а не F2P игра
+                is_free = details.get('is_free', False)
+                price_overview = details.get('price_overview', {})
+                
+                # Если игра обычно платная, но сейчас бесплатна
+                if not is_free and price_overview:
+                    final_price = price_overview.get('final', 0)
+                    initial_price = price_overview.get('initial', 0)
+                    
+                    if final_price == 0 and initial_price > 0:
+                        free_games.append({
+                            'appid': appid,
+                            'name': details.get('name', 'Unknown'),
+                            'original_price': initial_price / 100,  # Цена в долларах
+                            'header_image': details.get('header_image', ''),
+                            'short_description': details.get('short_description', ''),
+                            'url': f"https://store.steampowered.com/app/{appid}"
+                        })
+                        
+                        print(f"Found 100% discount: {details.get('name')}")
+            
+            # Задержка между запросами к API
+            await asyncio.sleep(1.5)
+    
+    return free_games
+
+
+@tasks.loop(hours=6)  # Проверка каждые 6 часов
 async def discount_game_check():
+    """Проверяет Steam на игры со 100% скидкой"""
     ch = bot.get_channel(DISCOUNT_CHANNEL_ID)
     if not ch:
+        print("Discord channel not configured for discount alerts")
         return
     
-    url = 'https://store.steampowered.com/search/?maxprice=free&specials=1'
+    print("Starting Steam 100% discount check...")
     
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
-    
-    async with aiohttp.ClientSession(headers=headers) as session:
-        async with session.get(url) as resp:
-            if not resp.ok:
-                print(f"Failed to fetch Steam sales: {resp.status}")
-                return
-            html = await resp.text()
-    
-    soup = BeautifulSoup(html, 'html.parser')
-    
-    async with db_pool.acquire() as conn:
-        existing = {r['game_link'] for r in await conn.fetch('SELECT game_link FROM sent_sales')}
+    try:
+        free_games = await check_free_promotions()
         
-        for item in soup.select('a.search_result_row')[:15]:
-            title_elem = item.select_one('.title')
-            if not title_elem:
-                continue
-                
-            title = title_elem.text.strip()
-            link = item.get('href', '').split('?')[0]
+        if not free_games:
+            print("No 100% discount games found")
+            return
+        
+        async with db_pool.acquire() as conn:
+            # Получаем уже отправленные игры
+            existing = {
+                r['game_link'] 
+                for r in await conn.fetch('SELECT game_link FROM sent_sales')
+            }
             
-            if not link or link in existing:
-                continue
+            sent_count = 0
             
-            discount_pct = item.select_one('.discount_pct')
-            original_price = item.select_one('.discount_original_price')
-            final_price = item.select_one('.discount_final_price')
-            
-            if not discount_pct or not final_price:
-                continue
+            for game in free_games:
+                game_url = game['url']
                 
-            discount_text = discount_pct.text.strip()
-            final_price_text = final_price.text.strip()
-            
-            if '-100%' in discount_text and ('Free' in final_price_text or 'Бесплатно' in final_price_text):
-                print(f"Found 100% discount game: {title}")
+                # Пропускаем если уже отправляли
+                if game_url in existing:
+                    continue
                 
-                await conn.execute(
-                    'INSERT INTO sent_sales (game_link, discount_end) VALUES ($1, NOW() + interval \'7 days\') ON CONFLICT DO NOTHING',
-                    link
-                )
+                # Сохраняем в БД
+                await conn.execute('''
+                    INSERT INTO sent_sales (game_link, discount_end) 
+                    VALUES ($1, NOW() + interval '14 days') 
+                    ON CONFLICT DO NOTHING
+                ''', game_url)
                 
+                # Создаём embed
                 embed = Embed(
-                    title="🔥 100% OFF - FREE TO KEEP!",
-                    description=f"**[{title}]({link})**\n\n💰 Was: {original_price.text.strip() if original_price else 'Paid'}\n✨ Now: **FREE**\n\n⏰ Limited time offer!",
-                    color=0xff6b6b
+                    title="🎉 FREE TO KEEP - 100% OFF!",
+                    description=(
+                        f"**[{game['name']}]({game_url})**\n\n"
+                        f"💵 Regular Price: **${game['original_price']:.2f}**\n"
+                        f"✨ Now: **FREE**\n\n"
+                        f"{game['short_description'][:200]}...\n\n"
+                        f"⏰ **Limited Time Offer - Claim it now!**"
+                    ),
+                    color=0x00ff00
                 )
-                embed.set_footer(text="Steam 100% Discount")
                 
-                img = item.select_one('img')
-                if img and img.get('src'):
-                    embed.set_thumbnail(url=img['src'])
+                if game['header_image']:
+                    embed.set_image(url=game['header_image'])
+                
+                embed.set_footer(
+                    text="Steam 100% Discount Alert • Claim before it ends!"
+                )
+                embed.timestamp = datetime.utcnow()
                 
                 try:
                     await ch.send(embed=embed)
+                    sent_count += 1
+                    print(f"✓ Sent alert for: {game['name']}")
+                    
+                    # Задержка между отправкой сообщений
                     await asyncio.sleep(2)
+                    
                 except Exception as e:
-                    print(f"Error sending discount message: {e}")
+                    print(f"Error sending message for {game['name']}: {e}")
+            
+            if sent_count > 0:
+                print(f"✓ Sent {sent_count} new 100% discount alerts")
+            
+    except Exception as e:
+        print(f"Error in discount_game_check: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    
 
 @tasks.loop(hours=1)
 async def cleanup_old_views():
