@@ -1728,6 +1728,23 @@ async def set_language(interaction: discord.Interaction, language: str):
     await register_commands_for_guild(interaction.guild, language)
     await interaction.followup.send("✅ Commands updated to new language!", ephemeral=True)
 
+@bot.tree.command(name='check_game', description='Check specific game discount')
+@app_commands.describe(appid='Steam App ID')
+async def check_game(interaction: discord.Interaction, appid: int):
+    await interaction.response.defer(ephemeral=True)
+    
+    details = await get_app_details(appid)
+    
+    if details:
+        info = (
+            f"**{details.get('name', 'Unknown')}**\n\n"
+            f"Is Free: {details.get('is_free', False)}\n"
+            f"Price Overview: {details.get('price_overview', 'None')}\n"
+        )
+        await interaction.followup.send(info, ephemeral=True)
+    else:
+        await interaction.followup.send("Could not fetch game details", ephemeral=True)
+
 @bot.tree.command(name='check_discounts', description='Manually check for 100% discounts (Admin only)')
 @app_commands.default_permissions(administrator=True)
 async def check_discounts_command(interaction: discord.Interaction):
