@@ -745,11 +745,34 @@ async def get_app_details(appid: int) -> Dict:
                 if resp.status == 200:
                     data = await resp.json()
                     if str(appid) in data and data[str(appid)].get('success'):
-                        return data[str(appid)].get('data', {})
+                        game_data = data[str(appid)].get('data', {})
+                        
+                        # Пытаемся получить дату окончания акции
+                        release_date = game_data.get('release_date', {})
+                        
+                        return game_data
     except Exception as e:
         print(f"Error fetching app {appid} details: {e}")
     
     return {}
+
+async def get_promo_end_time(appid: int) -> int | None:
+    """Получает Unix timestamp окончания акции для игры"""
+    url = f'https://store.steampowered.com/api/appdetails?appids={appid}&filters=price_overview'
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if str(appid) in data and data[str(appid)].get('success'):
+                        price_data = data[str(appid)].get('data', {}).get('price_overview', {})
+                        # Некоторые акции имеют поле discount_expiration
+                        return price_data.get('discount_expiration')
+    except Exception as e:
+        print(f"Error fetching promo end time for {appid}: {e}")
+    
+    return None
 
 async def check_free_promotions() -> List[Dict]:
     """Проверяет игры со 100% скидкой (временно бесплатные)"""
@@ -812,13 +835,17 @@ async def check_free_promotions() -> List[Dict]:
                         if initial_price > 0:
                             print(f"  ✓ Found 100% discount: {game_name} (was ${initial_price/100:.2f})")
                             
+                            # Получаем время окончания акции
+                            promo_end = await get_promo_end_time(appid)
+                            
                             free_games.append({
                                 'appid': appid,
                                 'name': game_name,
                                 'original_price': initial_price / 100,
                                 'header_image': details.get('header_image', ''),
                                 'short_description': details.get('short_description', ''),
-                                'url': f"https://store.steampowered.com/app/{appid}"
+                                'url': f"https://store.steampowered.com/app/{appid}",
+                                'promo_end': promo_end  # Unix timestamp или None
                             })
                         else:
                             print(f"  ⊘ Skipped {game_name} - F2P game (no original price)")
@@ -1889,23 +1916,41 @@ async def discount_game_check():
                     ON CONFLICT DO NOTHING
                 ''', game_url)
                 
+                # Формируем описание с информацией о времени окончания
+                description_parts = [
+                    f"**[{game['name']}]({game_url})**\n",
+                    f"💵 Regular Price: **${game['original_price']:.2f}**",
+                    f"✨ Now: **FREE**\n"
+                ]
+                
+                # Добавляем информацию о времени окончания акции
+                promo_end = game.get('promo_end')
+                if promo_end:
+                    # Конвертируем Unix timestamp в Discord timestamp
+                    end_timestamp = f"<t:{promo_end}:F>"  # Полная дата и время
+                    end_relative = f"<t:{promo_end}:R>"  # Относительное время (через X часов)
+                    description_parts.append(f"⏰ **Offer ends:** {end_timestamp} ({end_relative})")
+                else:
+                    description_parts.append(f"⏰ **Limited Time Offer - Claim it now!**")
+                
+                # Добавляем короткое описание
+                if game['short_description']:
+                    description_parts.append(f"\n{game['short_description'][:200]}...")
+                
                 embed = Embed(
-                    title="🎉 FREE TO KEEP - 100% OFF!",
-                    description=(
-                        f"**[{game['name']}]({game_url})**\n\n"
-                        f"💵 Regular Price: **${game['original_price']:.2f}**\n"
-                        f"✨ Now: **FREE**\n\n"
-                        f"{game['short_description'][:200]}...\n\n"
-                        f"⏰ **Limited Time Offer - Claim it now!**"
-                    ),
-                    color=0x00ff00
+                    title="🎉 FREE TO KEEP - 100% OFF! [STEAM]",
+                    description="\n".join(description_parts),
+                    color=0x1b2838  # Steam синий цвет
                 )
                 
                 if game['header_image']:
                     embed.set_image(url=game['header_image'])
                 
+                # Добавляем thumbnail с логотипом Steam
+                embed.set_thumbnail(url="https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Steam_icon_logo.svg/512px-Steam_icon_logo.svg.png")
+                
                 embed.set_footer(
-                    text="Steam 100% Discount Alert • Claim before it ends!"
+                    text="Steam 100% Discount Alert • Click title to claim!"
                 )
                 embed.timestamp = utcnow()
                 
@@ -1955,9 +2000,12 @@ async def epic_free_check():
     if not ch:
         return
     
+    print("Checking Epic Games Store for free games...")
+    
     async with aiohttp.ClientSession() as session:
         async with session.get(EPIC_API_URL) as resp:
             if not resp.ok:
+                print(f"Failed to fetch Epic API: {resp.status}")
                 return
             data = await resp.json()
     
@@ -1966,29 +2014,110 @@ async def epic_free_check():
     async with db_pool.acquire() as conn:
         existing = {r['game_title'] for r in await conn.fetch('SELECT game_title FROM sent_epic')}
         
+        sent_count = 0
+        
         for game in offers:
             title = game.get('title')
             if not title or title in existing:
                 continue
             
             promos = game.get('promotions') or {}
-            for block in promos.get('promotionalOffers', []):
-                for o in block.get('promotionalOffers', []):
-                    if o.get('discountSetting', {}).get('discountPercentage') == 0:
+            promotional_offers = promos.get('promotionalOffers', [])
+            
+            if not promotional_offers:
+                continue
+            
+            for block in promotional_offers:
+                for offer in block.get('promotionalOffers', []):
+                    discount_percent = offer.get('discountSetting', {}).get('discountPercentage', 0)
+                    
+                    # Проверяем что игра бесплатна (скидка 0 = бесплатная)
+                    if discount_percent == 0:
+                        # Получаем дату окончания акции
+                        end_date_str = offer.get('endDate')
+                        end_timestamp = None
+                        
+                        if end_date_str:
+                            try:
+                                # Парсим ISO 8601 дату без внешних библиотек
+                                # Формат: 2024-12-19T16:00:00.000Z
+                                end_date_str = end_date_str.replace('Z', '+00:00')
+                                end_date = datetime.fromisoformat(end_date_str)
+                                end_timestamp = int(end_date.timestamp())
+                            except Exception as e:
+                                print(f"Error parsing date {end_date_str}: {e}")
+                                pass
+                        
+                        # Получаем оригинальную цену (если есть)
+                        original_price = game.get('price', {}).get('totalPrice', {}).get('fmtPrice', {}).get('originalPrice', 'Unknown')
+                        
+                        # Сохраняем в БД
+                        offer_end_time = utcnow() + timedelta(days=14) if not end_date_str else None
                         await conn.execute(
                             'INSERT INTO sent_epic (game_title, offer_end) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-                            title, utcnow() + timedelta(days=7)
+                            title, offer_end_time or utcnow() + timedelta(days=14)
                         )
+                        
+                        # Формируем URL игры
                         slug = game.get('productSlug') or game.get('catalogNs', {}).get('mappings', [{}])[0].get('pageSlug')
-                        url = f"https://www.epicgames.com/store/p/{slug}" if slug else ""
+                        url = f"https://www.epicgames.com/store/p/{slug}" if slug else "https://www.epicgames.com/store"
+                        
+                        # Получаем описание
+                        description = game.get('description', '')
+                        
+                        # Формируем embed
+                        description_parts = [
+                            f"**[{title}]({url})**\n",
+                        ]
+                        
+                        if original_price and original_price != 'Unknown':
+                            description_parts.append(f"💵 Regular Price: **{original_price}**")
+                        
+                        description_parts.append(f"✨ Now: **FREE**\n")
+                        
+                        # Добавляем время окончания акции
+                        if end_timestamp:
+                            end_discord_time = f"<t:{end_timestamp}:F>"
+                            end_relative = f"<t:{end_timestamp}:R>"
+                            description_parts.append(f"⏰ **Offer ends:** {end_discord_time} ({end_relative})")
+                        else:
+                            description_parts.append(f"⏰ **Limited Time Offer - Claim it now!**")
+                        
+                        # Добавляем описание игры
+                        if description:
+                            description_parts.append(f"\n{description[:200]}...")
                         
                         embed = Embed(
-                            title="🎁 FREE GAME",
-                            description=f"**[{title}]({url})**\n\nFree on Epic Games Store!",
-                            color=0x00d4aa
+                            title="🎁 FREE GAME [EPIC GAMES]",
+                            description="\n".join(description_parts),
+                            color=0x2a2a2a  # Epic Games черный цвет
                         )
-                        embed.set_footer(text="Epic Games")
-                        await ch.send(embed=embed)
+                        
+                        # Добавляем изображение игры
+                        images = game.get('keyImages', [])
+                        for img in images:
+                            if img.get('type') in ['DieselStoreFrontWide', 'OfferImageWide']:
+                                embed.set_image(url=img.get('url'))
+                                break
+                        
+                        # Thumbnail с логотипом Epic
+                        embed.set_thumbnail(url="https://cdn2.unrealengine.com/epic-games-logo-400x400-400x400-8b940a8bab7a.png")
+                        
+                        embed.set_footer(text="Epic Games Store • Click title to claim!")
+                        embed.timestamp = utcnow()
+                        
+                        try:
+                            await ch.send(embed=embed)
+                            sent_count += 1
+                            print(f"✓ Sent Epic alert for: {title}")
+                            await asyncio.sleep(2)
+                        except Exception as e:
+                            print(f"Error sending Epic message for {title}: {e}")
+        
+        if sent_count > 0:
+            print(f"✓ Sent {sent_count} new Epic Games alerts")
+        else:
+            print("No new Epic Games promotions found")
 
 # === Start ===
 if __name__ == '__main__':
